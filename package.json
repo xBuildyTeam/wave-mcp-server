@@ -1,0 +1,24 @@
+{
+  "name": "wave-os-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server exposing Base44 backend + Theta compute + Wave OS intelligence to AI coding assistants",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "keywords": ["mcp", "base44", "theta", "wave-os", "ai", "model-context-protocol"],
+  "license": "MIT",
+  "author": "Eddie Pizarro — xBuildy",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "tsx": "^4.7.0",
+    "@types/node": "^20.0.0"
+  }
+}
