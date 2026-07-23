@@ -381,7 +381,7 @@ function fetchWithTimeout(url, options = {}, timeoutMs = API_TIMEOUT_MS) {
 // BASE44 FETCH
 // ============================================================
 
-async function base44Fetch(path, options = {}) {
+async function base44Fetch(path: string, options: any = {}) {
   const url = new URL(`${BASE44_BASE_URL}${path}`);
   const headers = { "Content-Type": "application/json", "x-api-key": BASE44_API_KEY, ...options.headers };
   if (options.headers?.["Content-Type"] === undefined) delete headers["Content-Type"];
@@ -399,7 +399,7 @@ async function base44Fetch(path, options = {}) {
 // - "direct": ALL theta calls → direct Theta API (BYOK only, no credits)
 // ============================================================
 
-async function thetaCompute(action, params = {}) {
+async function thetaCompute(action: string, params: any = {}) {
   const mode = await getThetaMode();
   if (!mode) {
     throw new Error("Theta not configured. Use wave_connect (credit-gated, no API key needed) or theta_configure (BYOK with your own Theta key).");
