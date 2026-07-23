@@ -4,13 +4,11 @@
       "command": "node",
       "args": ["./wave-mcp-server/dist/index.js"],
       "env": {
-        "BASE44_APP_ID": "YOUR_APP_ID_HERE",
-        "BASE44_API_KEY": "YOUR_API_KEY_HERE",
-        "MCP_ENCRYPTION_KEY": "SET_A_RANDOM_STRING_HERE_FOR_AES256",
-        "WAVE_OS_AUTH_TOKEN": "OPTIONAL_GET_FROM_OSWAVE_IO_SETTINGS_DEVELOPER",
-        "WAVE_OS_WORKSPACE_ID": "OPTIONAL_YOUR_WORKSPACE_ID",
-        "THETA_API_KEY": "OPTIONAL_YOUR_THETA_API_KEY",
-        "THETA_PROJECT_ID": "OPTIONAL_YOUR_THETA_PROJECT_ID",
+        "BASE44_APP_ID": "6a5abc9bfa61c917463b71cd",
+        "BASE44_API_KEY": "PASTE_YOUR_WAVE_OS_API_KEY_HERE",
+        "MCP_ENCRYPTION_KEY": "wave-mcp-7f3a9b2e1c5d8a4f6e0b3d7c9a2f5e8b",
+        "THETA_API_KEY": "u5ng2w4ammzjeha25equxghdqdp9wqq4",
+        "THETA_PROJECT_ID": "prj_yv47tw4wmju1cvh097aj44vbycmn",
         "THETA_ALLOW_WRITES": "false"
       }
     }
