@@ -1,10 +1,18 @@
 /**
- * Wave OS MCP Server v1.2.0 — Credit-Gated + BYOK + AES-256
+ * Wave OS MCP Server v1.3.0 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
  * 
  * Three credential modes for Theta compute:
  * 1. Wave OS Auth Token — routes through thetaProxy backend (credit-gated, no raw key needed)
  * 2. BYOK — user saves own Theta key (AES-256 encrypted at rest)
  * 3. Env Vars — shared key (demo/admin use only)
+ * 
+ * Hybrid compute routing:
+ * - hybrid (default): Light tasks on Base44, heavy AI compute on Theta (decentralized)
+ * - wave_os: All compute routed through Wave OS backend (maximum credit-gating)
+ * - direct: All compute routed directly to Theta (BYOK power users, no credits)
+ * 
+ * Positioning: Base44 = intelligence/orchestration layer. Theta = decentralized GPU compute.
+ * Every Theta call still flows through a Base44 backend function — Base44 gets platform revenue.
  * 
  * Built by xBuildy for the Base44 Dev Build-Off Competition
  * July 2026
@@ -39,6 +47,14 @@ const THETA_API_KEY_ENV = process.env.THETA_API_KEY || "";
 const THETA_PROJECT_ID_ENV = process.env.THETA_PROJECT_ID || "";
 const THETA_RPC_URL = process.env.THETA_RPC_URL || "https://theta-rpc.thetatoken.org";
 const THETA_EDGE_URL = process.env.THETA_EDGE_URL || "https://controller.thetaedgecloud.com";
+
+// Compute routing: hybrid (default) | wave_os | direct
+// hybrid = Base44 for light tasks (entity CRUD, memory, functions), Theta for heavy AI compute
+// wave_os = everything through Wave OS backend (max credit-gating, Base44 gets all revenue)
+// direct = everything directly to Theta (BYOK users, no credits, no Base44 intermediary)
+const COMPUTE_ROUTING = ["hybrid", "wave_os", "direct"].includes(process.env.COMPUTE_ROUTING)
+  ? process.env.COMPUTE_ROUTING
+  : "hybrid";
 
 const MCP_ENCRYPTION_KEY = process.env.MCP_ENCRYPTION_KEY || "";
 const ALLOWED_FILE_ROOT = process.env.MCP_FILE_ROOT || join(homedir(), "wave-mcp-uploads");
@@ -99,7 +115,7 @@ async function loadCredentials() {
   try {
     const fs = await import("fs/promises");
     return JSON.parse(await fs.readFile(CREDENTIAL_STORE_PATH, "utf8"));
-  } catch { return { theta: null, wave_os: null }; }
+  } catch { return { theta: null, wave_os: null, routing: null }; }
 }
 
 async function saveCredentials(creds) {
@@ -108,19 +124,16 @@ async function saveCredentials(creds) {
   await fs.writeFile(CREDENTIAL_STORE_PATH, JSON.stringify(creds, null, 2), { mode: 0o600 });
 }
 
-// ─── Theta credential resolution ───
-// Priority: Wave OS auth token (credit-gated) > BYOK > env vars
 async function getThetaMode() {
-  // 1. Wave OS auth token (credit-gated, no raw key)
   const stored = await loadCredentials();
+  
+  // 1. Wave OS auth token (credit-gated, no raw key)
   if (stored.wave_os && stored.wave_os.auth_token_encrypted && stored.wave_os.workspace_id) {
     try {
       const token = decryptKey(stored.wave_os.auth_token_encrypted);
       if (token) return { mode: "wave_os", authToken: token, workspaceId: stored.wave_os.workspace_id, savedAt: stored.wave_os.saved_at };
     } catch { /* fall through */ }
   }
-  
-  // Also check env vars for Wave OS auth
   if (WAVE_OS_AUTH_TOKEN && WAVE_OS_WORKSPACE_ID) {
     return { mode: "wave_os", authToken: WAVE_OS_AUTH_TOKEN, workspaceId: WAVE_OS_WORKSPACE_ID, source: "env" };
   }
@@ -145,23 +158,13 @@ async function getThetaMode() {
 
 async function saveWaveOsCredentials(authToken, workspaceId) {
   const creds = await loadCredentials();
-  creds.wave_os = {
-    auth_token_encrypted: encryptKey(authToken),
-    workspace_id: workspaceId,
-    saved_at: new Date().toISOString(),
-    encrypted_at_rest: true,
-  };
+  creds.wave_os = { auth_token_encrypted: encryptKey(authToken), workspace_id: workspaceId, saved_at: new Date().toISOString(), encrypted_at_rest: true };
   await saveCredentials(creds);
 }
 
 async function saveThetaCredentials(apiKey, projectId) {
   const creds = await loadCredentials();
-  creds.theta = {
-    api_key_encrypted: encryptKey(apiKey),
-    project_id: projectId,
-    saved_at: new Date().toISOString(),
-    encrypted_at_rest: true,
-  };
+  creds.theta = { api_key_encrypted: encryptKey(apiKey), project_id: projectId, saved_at: new Date().toISOString(), encrypted_at_rest: true };
   await saveCredentials(creds);
 }
 
@@ -174,6 +177,19 @@ async function removeThetaCredentials() {
 async function removeWaveOsCredentials() {
   const creds = await loadCredentials();
   creds.wave_os = null;
+  await saveCredentials(creds);
+}
+
+// ─── Routing config persistence ───
+async function getRoutingMode() {
+  const stored = await loadCredentials();
+  if (stored.routing && stored.routing.mode) return stored.routing.mode;
+  return COMPUTE_ROUTING;
+}
+
+async function saveRoutingMode(mode) {
+  const creds = await loadCredentials();
+  creds.routing = { mode, saved_at: new Date().toISOString() };
   await saveCredentials(creds);
 }
 
@@ -198,6 +214,14 @@ function validateConfig() {
   } else {
     console.error(`INFO: Theta modes from env: ${thetaModes.join(", ")}`);
   }
+  
+  // Compute routing info
+  const routingDesc = {
+    hybrid: "Base44 for light tasks, Theta for heavy AI compute (recommended)",
+    wave_os: "All compute through Wave OS backend (max credit-gating, Base44 gets all revenue)",
+    direct: "All compute directly to Theta (BYOK power users, no credits)",
+  };
+  console.error(`INFO: Compute routing: ${COMPUTE_ROUTING} — ${routingDesc[COMPUTE_ROUTING]}`);
   
   try { new URL(BASE44_BASE_URL); } catch { console.error("FATAL: Invalid BASE44_BASE_URL"); process.exit(1); }
   try { new URL(THETA_RPC_URL); } catch { console.error("FATAL: Invalid THETA_RPC_URL"); process.exit(1); }
@@ -367,7 +391,12 @@ async function base44Fetch(path, options = {}) {
 }
 
 // ============================================================
-// THETA COMPUTE — routes through Wave OS (credit-gated) or direct
+// THETA COMPUTE — hybrid routing
+// ============================================================
+// Routing logic:
+// - "hybrid" (default): inference → Wave OS backend (credit-gated). listModels/gpuStatus → direct Theta.
+// - "wave_os": ALL theta calls → Wave OS backend (max credit-gating, Base44 gets all revenue)
+// - "direct": ALL theta calls → direct Theta API (BYOK only, no credits)
 // ============================================================
 
 async function thetaCompute(action, params = {}) {
@@ -376,54 +405,50 @@ async function thetaCompute(action, params = {}) {
     throw new Error("Theta not configured. Use wave_connect (credit-gated, no API key needed) or theta_configure (BYOK with your own Theta key).");
   }
   
-  if (mode.mode === "wave_os") {
-    // Route through Wave OS backend — credit-gated, no raw key exposed
+  const routing = await getRoutingMode();
+  
+  // Determine if this call should go through Wave OS or direct
+  const useWaveOs = (routing === "wave_os") || 
+    (routing === "hybrid" && mode.mode === "wave_os" && action === "inference") ||
+    (routing === "hybrid" && mode.mode === "wave_os" && (action === "listModels" || action === "gpuStatus" || action === "checkConnection"));
+  
+  const useDirect = (routing === "direct") ||
+    (routing === "hybrid" && mode.mode !== "wave_os" && (action === "listModels" || action === "gpuStatus" || action === "inference"));
+  
+  if (useWaveOs && mode.mode === "wave_os") {
+    // Route through Wave OS backend — credit-gated, Base44 gets platform revenue
     return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/thetaProxy`, {
       method: "POST",
-      body: JSON.stringify({
-        action,
-        workspace_id: mode.workspaceId,
-        ...params,
-      }),
+      body: JSON.stringify({ action, workspace_id: mode.workspaceId, ...params }),
     });
   }
   
-  // Direct mode (BYOK or env vars) — call Theta API directly
+  // Direct mode — call Theta API directly
   const apiKey = mode.apiKey;
   const projectId = mode.projectId;
   const edgeUrl = THETA_EDGE_URL;
+  const billingMode = mode.mode === "byok" ? "byok" : "env";
   
   if (action === "listModels") {
-    const response = await fetchWithTimeout(`${edgeUrl}/api/v1/models`, {
-      method: "GET",
-      headers: { "x-api-key": apiKey },
-    });
+    const response = await fetchWithTimeout(`${edgeUrl}/api/v1/models`, { method: "GET", headers: { "x-api-key": apiKey } });
     if (!response.ok) throw new Error(`Theta API returned ${response.status}`);
-    return { models: await response.json(), billing_mode: mode.mode === "byok" ? "byok" : "env" };
+    return { models: await response.json(), billing_mode: billingMode, routing: routing };
   }
   
   if (action === "gpuStatus") {
-    const response = await fetchWithTimeout(`${edgeUrl}/api/v1/projects/${encodeURIComponent(projectId)}/instances`, {
-      method: "GET",
-      headers: { "x-api-key": apiKey },
-    });
+    const response = await fetchWithTimeout(`${edgeUrl}/api/v1/projects/${encodeURIComponent(projectId)}/instances`, { method: "GET", headers: { "x-api-key": apiKey } });
     if (!response.ok) throw new Error(`Theta API returned ${response.status}`);
-    return { status: await response.json(), billing_mode: mode.mode === "byok" ? "byok" : "env" };
+    return { status: await response.json(), billing_mode: billingMode, routing: routing };
   }
   
   if (action === "inference") {
     const response = await fetchWithTimeout(`${edgeUrl}/api/v1/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-      body: JSON.stringify({
-        model: params.model,
-        messages: params.messages,
-        max_tokens: params.max_tokens || 2048,
-        temperature: params.temperature || 0.7,
-      }),
+      body: JSON.stringify({ model: params.model, messages: params.messages, max_tokens: params.max_tokens || 2048, temperature: params.temperature || 0.7 }),
     });
     if (!response.ok) throw new Error(`Theta API returned ${response.status}`);
-    return { ...(await response.json()), billing_mode: mode.mode === "byok" ? "byok" : "env" };
+    return { ...(await response.json()), billing_mode: billingMode, routing: routing };
   }
   
   throw new Error(`Unknown theta action: ${action}`);
@@ -457,23 +482,24 @@ async function thetaRpc(method, params = []) {
 // ============================================================
 
 const tools = [
-  // LAYER 1: BASE44 BACKEND
+  // LAYER 1: BASE44 BACKEND (light tasks — always on Base44)
   { name: "list_entities", description: "List all entity schemas in the Base44 app.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
   { name: "create_entity", description: "Create a new entity schema on the Base44 backend.", inputSchema: { type: "object", properties: { entity_name: { type: "string" }, schema: { type: "object" } }, required: ["entity_name", "schema"], additionalProperties: false } },
   { name: "read_records", description: "Read records from a Base44 entity with filtering, sorting, pagination.", inputSchema: { type: "object", properties: { entity_name: { type: "string" }, query: { type: "object" }, limit: { type: "number" }, skip: { type: "number" }, sort: { type: "string" }, fields: { type: "array", items: { type: "string" } } }, required: ["entity_name"], additionalProperties: false } },
   { name: "create_records", description: "Create one or more records in a Base44 entity.", inputSchema: { type: "object", properties: { entity_name: { type: "string" }, data: { type: "array", items: { type: "object" } } }, required: ["entity_name", "data"], additionalProperties: false } },
   { name: "update_records", description: "Update records matching a query filter. Requires non-empty query.", inputSchema: { type: "object", properties: { entity_name: { type: "string" }, query: { type: "object" }, data: { type: "object" } }, required: ["entity_name", "query", "data"], additionalProperties: false } },
-  { name: "delete_records", description: "Delete records matching a query filter. Requires non-empty query to prevent table wipes.", inputSchema: { type: "object", properties: { entity_name: { type: "string" }, query: { type: "object" } }, required: ["entity_name", "query"], additionalProperties: false } },
+  { name: "delete_records", description: "Delete records matching a query filter. Requires non-empty query.", inputSchema: { type: "object", properties: { entity_name: { type: "string" }, query: { type: "object" } }, required: ["entity_name", "query"], additionalProperties: false } },
   { name: "aggregate_records", description: "Run a MongoDB aggregation pipeline. $out, $merge, $lookup, $facet blocked.", inputSchema: { type: "object", properties: { entity_name: { type: "string" }, pipeline: { type: "array", items: { type: "object" } } }, required: ["entity_name", "pipeline"], additionalProperties: false } },
   { name: "call_function", description: "Call a deployed Base44 backend function via HTTP.", inputSchema: { type: "object", properties: { function_name: { type: "string" }, method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE"] }, payload: { type: "object" } }, required: ["function_name"], additionalProperties: false } },
   { name: "upload_file", description: "Upload a file to Base44 storage. Restricted to allowed directory.", inputSchema: { type: "object", properties: { file_path: { type: "string" } }, required: ["file_path"], additionalProperties: false } },
 
-  // LAYER 2: THETA COMPUTE
+  // LAYER 2: THETA COMPUTE (heavy tasks — routed based on COMPUTE_ROUTING)
+  { name: "wave_routing_config", description: "Check or set the compute routing mode. hybrid = Base44 for light tasks, Theta for heavy AI compute (recommended, default). wave_os = all compute through Wave OS backend (max credit-gating, Base44 gets all revenue). direct = all compute directly to Theta (BYOK power users, no credits).", inputSchema: { type: "object", properties: { action: { type: "string", enum: ["check", "set"], description: "check = view current routing, set = change routing mode" }, mode: { type: "string", enum: ["hybrid", "wave_os", "direct"], description: "Routing mode (only for action=set)" } }, required: ["action"], additionalProperties: false } },
   { name: "wave_connect", description: "Connect to Wave OS with your auth token. Routes Theta compute through Wave OS backend (credit-gated, no raw API key needed). Get your token from oswave.io/settings/developer. Token is encrypted with AES-256-GCM at rest.", inputSchema: { type: "object", properties: { auth_token: { type: "string", description: "Wave OS auth token from oswave.io/settings/developer" }, workspace_id: { type: "string", description: "Your Wave OS workspace ID" }, action: { type: "string", enum: ["connect", "check", "disconnect"], description: "connect = save token, check = test connection, disconnect = remove token" } }, required: ["auth_token", "workspace_id", "action"], additionalProperties: false } },
   { name: "theta_configure", description: "Save your own Theta EdgeCloud API key (BYOK). Bypasses Wave OS credits — you pay Theta directly. Key encrypted with AES-256-GCM at rest.", inputSchema: { type: "object", properties: { api_key: { type: "string" }, project_id: { type: "string" } }, required: ["api_key", "project_id"], additionalProperties: false } },
-  { name: "theta_check_credentials", description: "Check current Theta credential mode (Wave OS credit-gated, BYOK, or env vars). Shows masked key, never raw.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "theta_check_credentials", description: "Check current Theta credential mode and compute routing. Shows masked key, routing mode, and billing info.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
   { name: "theta_list_models", description: "List available AI models on Theta EdgeCloud.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
-  { name: "theta_run_inference", description: "Run AI inference on Theta EdgeCloud. Credit-gated (4 credits) via Wave OS, or free if using BYOK.", inputSchema: { type: "object", properties: { model: { type: "string" }, messages: { type: "array", items: { type: "object" } }, max_tokens: { type: "number" }, temperature: { type: "number" } }, required: ["model", "messages"], additionalProperties: false } },
+  { name: "theta_run_inference", description: "Run AI inference on Theta EdgeCloud. Routed based on COMPUTE_ROUTING: hybrid→Wave OS (credit-gated, 4cr), direct→Theta (BYOK, free).", inputSchema: { type: "object", properties: { model: { type: "string" }, messages: { type: "array", items: { type: "object" } }, max_tokens: { type: "number" }, temperature: { type: "number" } }, required: ["model", "messages"], additionalProperties: false } },
   { name: "theta_check_gpu_status", description: "Check running Theta EdgeCloud GPU instances.", inputSchema: { type: "object", properties: {}, additionalProperties: false } },
   { name: "theta_estimate_cost", description: "Estimate TFUEL cost for a GPU job. Pure calculation, no API calls.", inputSchema: { type: "object", properties: { model: { type: "string" }, duration_minutes: { type: "number" } }, required: ["model", "duration_minutes"], additionalProperties: false } },
   { name: "theta_deploy_contract", description: "Deploy a smart contract to Theta mainnet. REQUIRES THETA_ALLOW_WRITES=true. Irreversible.", inputSchema: { type: "object", properties: { bytecode: { type: "string" }, abi: { type: "array", items: { type: "object" } }, constructor_args: { type: "array", items: { type: "string" } } }, required: ["bytecode", "abi"], additionalProperties: false } },
@@ -481,7 +507,7 @@ const tools = [
   { name: "theta_get_balance", description: "Get TFUEL and WAVE token balance for a wallet. Read-only.", inputSchema: { type: "object", properties: { wallet_address: { type: "string" }, token_contract: { type: "string" } }, required: ["wallet_address"], additionalProperties: false } },
   { name: "theta_get_transaction", description: "Fetch transaction details by hash. Read-only.", inputSchema: { type: "object", properties: { tx_hash: { type: "string" } }, required: ["tx_hash"], additionalProperties: false } },
 
-  // LAYER 3: WAVE OS INTELLIGENCE
+  // LAYER 3: WAVE OS INTELLIGENCE (light tasks — always on Base44)
   { name: "wave_morning_briefing", description: "Get aggregated morning briefing from Wave OS Chief of Staff.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, proactivity_level: { type: "string", enum: ["low", "medium", "high"] } }, required: ["workspace_id"], additionalProperties: false } },
   { name: "wave_triage", description: "Run a triage scan for urgent items across Wave OS entities.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, proactivity_level: { type: "string", enum: ["low", "medium", "high"] } }, required: ["workspace_id"], additionalProperties: false } },
   { name: "wave_follow_up_scan", description: "Scan for tasks with natural language due dates.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" } }, required: ["workspace_id"], additionalProperties: false } },
@@ -501,19 +527,16 @@ async function handleToolCall(name, args) {
     // ── LAYER 1: BASE44 ──
     case "list_entities":
       return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/entities`);
-    
     case "create_entity": {
       validateEntityName(args.entity_name);
       if (!args.schema || typeof args.schema !== "object") throw new Error("Invalid schema");
       if (JSON.stringify(args.schema).length > 50000) throw new Error("Schema too large");
       return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/entities`, { method: "POST", body: JSON.stringify({ entity_name: args.entity_name, schema: args.schema }) });
     }
-    
     case "read_records": {
       validateEntityName(args.entity_name);
       return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/entities/${encodeURIComponent(args.entity_name)}/records`, { method: "POST", body: JSON.stringify({ query: args.query || {}, limit: validateLimit(args.limit), skip: validateSkip(args.skip), sort: validateSortField(args.sort), fields: validateFieldNames(args.fields) }) });
     }
-    
     case "create_records": {
       validateEntityName(args.entity_name);
       if (!Array.isArray(args.data) || args.data.length === 0) throw new Error("Data must be non-empty array");
@@ -521,26 +544,22 @@ async function handleToolCall(name, args) {
       if (JSON.stringify({ data: args.data }).length > 500000) throw new Error("Payload too large");
       return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/entities/${encodeURIComponent(args.entity_name)}/records`, { method: "PUT", body: JSON.stringify({ data: args.data }) });
     }
-    
     case "update_records": {
       validateEntityName(args.entity_name);
       if (!args.query || Object.keys(args.query).length === 0) throw new Error("Update requires non-empty query");
       if (!args.data || typeof args.data !== "object") throw new Error("Update data must be object");
       return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/entities/${encodeURIComponent(args.entity_name)}/records`, { method: "PATCH", body: JSON.stringify({ query: args.query, data: args.data }) });
     }
-    
     case "delete_records": {
       validateEntityName(args.entity_name);
       validateDeleteQuery(args.query);
       return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/entities/${encodeURIComponent(args.entity_name)}/records`, { method: "DELETE", body: JSON.stringify({ query: args.query }) });
     }
-    
     case "aggregate_records": {
       validateEntityName(args.entity_name);
       validatePipeline(args.pipeline);
       return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/entities/${encodeURIComponent(args.entity_name)}/aggregate`, { method: "POST", body: JSON.stringify({ pipeline: args.pipeline }) });
     }
-    
     case "call_function": {
       validateFunctionName(args.function_name);
       const method = ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(args.method) ? args.method : "POST";
@@ -551,7 +570,6 @@ async function handleToolCall(name, args) {
       }
       return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/${encodeURIComponent(args.function_name)}`, { method, body: method === "GET" ? undefined : JSON.stringify(payload) });
     }
-    
     case "upload_file": {
       const filePath = validateFilePath(args.file_path);
       const fs = await import("fs/promises");
@@ -563,69 +581,85 @@ async function handleToolCall(name, args) {
       formData.append("file", new Blob([fileBuffer]), filePath.split("/").pop() || "upload");
       return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/files/upload`, { method: "POST", body: formData, headers: { "Content-Type": undefined } });
     }
-    
-    // ── LAYER 2: THETA COMPUTE ──
-    
+
+    // ── LAYER 2: THETA COMPUTE (hybrid routing) ──
+
+    case "wave_routing_config": {
+      const action = args.action || "check";
+      if (action === "check") {
+        const mode = await getThetaMode();
+        const routing = await getRoutingMode();
+        const routingDesc = {
+          hybrid: "Base44 for light tasks (entity CRUD, memory, functions), Theta for heavy AI compute (inference). Recommended — Base44 gets platform revenue, Theta gets compute revenue.",
+          wave_os: "All compute routed through Wave OS backend. Maximum credit-gating — Base44 handles everything including inference proxy. Users buy Wave credits.",
+          direct: "All compute routed directly to Theta. BYOK power users only — no Wave credits, direct Theta billing. Base44 still gets entity/function/storage revenue.",
+        };
+        return {
+          routing_mode: routing,
+          description: routingDesc[routing],
+          theta_credential_mode: mode ? mode.mode : "none",
+          env_routing_default: COMPUTE_ROUTING,
+          architecture: {
+            layer1_base44: "Entity CRUD, file storage, backend functions, memory — always on Base44",
+            layer2_theta: "AI inference, GPU compute — routed based on COMPUTE_ROUTING",
+            layer3_intelligence: "Chief of Staff, triage, briefings — always on Base44 (calls Theta internally)",
+          },
+          positioning: "Base44 = intelligence & orchestration layer. Theta = decentralized GPU compute. Every Theta call still flows through a Base44 backend function.",
+        };
+      }
+      if (action === "set") {
+        const newMode = args.mode;
+        if (!["hybrid", "wave_os", "direct"].includes(newMode)) throw new Error("Mode must be: hybrid, wave_os, or direct");
+        await saveRoutingMode(newMode);
+        const mode = await getThetaMode();
+        return {
+          status: "updated",
+          routing_mode: newMode,
+          theta_credential_mode: mode ? mode.mode : "none",
+          note: newMode === "hybrid" ? "Light tasks on Base44, heavy AI compute on Theta. Optimal for credit-gated users." : newMode === "wave_os" ? "All compute through Wave OS. Max credit-gating, Base44 gets all revenue." : "Direct to Theta. BYOK only, no credits.",
+        };
+      }
+      throw new Error("Unknown action");
+    }
+
     case "wave_connect": {
       const action = args.action || "connect";
-      
       if (action === "connect") {
         const authToken = validateAuthToken(args.auth_token);
         const workspaceId = validateFunctionName(args.workspace_id);
-        
-        // Test connection through Wave OS backend
         try {
           const testResult = await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/thetaProxy`, {
             method: "POST",
             body: JSON.stringify({ action: "checkConnection", workspace_id: workspaceId }),
           });
-          
           if (testResult.connected) {
             await saveWaveOsCredentials(authToken, workspaceId);
-            return {
-              status: "connected",
-              workspace_id: workspaceId,
-              billing_mode: testResult.billing_mode,
-              theta_connected: true,
-              auth_token_masked: maskKey(authToken),
-              encrypted_at_rest: true,
-              encryption: "AES-256-GCM",
-              note: "Theta compute is now credit-gated through Wave OS. No raw API key needed.",
-            };
-          } else {
-            return { status: "connected_to_wave_os", theta_connected: false, message: "Connected to Wave OS, but Theta backend needs configuration. Contact admin or use theta_configure for BYOK." };
+            return { status: "connected", workspace_id: workspaceId, billing_mode: testResult.billing_mode, theta_connected: true, auth_token_masked: maskKey(authToken), encrypted_at_rest: true, encryption: "AES-256-GCM", note: "Theta compute is now credit-gated through Wave OS. No raw API key needed." };
           }
-        } catch (e) {
-          // Save anyway — Wave OS is reachable even if Theta needs config
           await saveWaveOsCredentials(authToken, workspaceId);
-          return { status: "connected", workspace_id: workspaceId, warning: "Theta backend test failed — saved anyway. Credits will be deducted on use." };
+          return { status: "connected", workspace_id: workspaceId, warning: "Theta backend test failed — saved anyway." };
+        } catch (e) {
+          await saveWaveOsCredentials(authToken, workspaceId);
+          return { status: "connected", workspace_id: workspaceId, warning: "Connection test failed — saved anyway." };
         }
       }
-      
       if (action === "check") {
         const mode = await getThetaMode();
-        if (!mode) return { connected: false, message: "No credentials configured. Use wave_connect (credit-gated) or theta_configure (BYOK)." };
-        if (mode.mode === "wave_os") {
-          return { connected: true, mode: "wave_os (credit-gated)", workspace_id: mode.workspaceId, auth_token_masked: maskKey(mode.authToken), encrypted_at_rest: true };
-        }
-        if (mode.mode === "byok") {
-          return { connected: true, mode: "byok", project_id: mode.projectId, api_key_masked: maskKey(mode.apiKey), encrypted_at_rest: true };
-        }
+        if (!mode) return { connected: false, message: "No credentials. Use wave_connect or theta_configure." };
+        if (mode.mode === "wave_os") return { connected: true, mode: "wave_os (credit-gated)", workspace_id: mode.workspaceId, auth_token_masked: maskKey(mode.authToken), encrypted_at_rest: true };
+        if (mode.mode === "byok") return { connected: true, mode: "byok", project_id: mode.projectId, api_key_masked: maskKey(mode.apiKey), encrypted_at_rest: true };
         return { connected: true, mode: "env (shared key)", project_id: mode.projectId };
       }
-      
       if (action === "disconnect") {
         await removeWaveOsCredentials();
-        return { status: "disconnected", message: "Wave OS auth token removed. Theta will use BYOK or env vars if available." };
+        return { status: "disconnected", message: "Wave OS auth token removed." };
       }
-      
-      throw new Error("Unknown action for wave_connect");
+      throw new Error("Unknown action");
     }
-    
+
     case "theta_configure": {
       const apiKey = validateThetaApiKey(args.api_key);
       const projectId = validateThetaProjectId(args.project_id);
-      // Test before saving
       try {
         const testResponse = await fetchWithTimeout(`${THETA_EDGE_URL}/api/v1/models`, { method: "GET", headers: { "x-api-key": apiKey } });
         if (!testResponse.ok) throw new Error(`Theta API returned ${testResponse.status}`);
@@ -633,48 +667,48 @@ async function handleToolCall(name, args) {
       await saveThetaCredentials(apiKey, projectId);
       return { status: "configured", project_id: projectId, api_key_masked: maskKey(apiKey), encrypted_at_rest: true, encryption: "AES-256-GCM", note: "BYOK active. You pay Theta directly — no Wave OS credits deducted." };
     }
-    
+
     case "theta_check_credentials": {
       const mode = await getThetaMode();
-      if (!mode) return { configured: false, message: "Use wave_connect (credit-gated) or theta_configure (BYOK)." };
-      if (mode.mode === "wave_os") return { configured: true, mode: "wave_os (credit-gated)", workspace_id: mode.workspaceId, auth_token_masked: maskKey(mode.authToken), encrypted_at_rest: true, encryption: "AES-256-GCM" };
-      if (mode.mode === "byok") return { configured: true, mode: "byok", project_id: mode.projectId, api_key_masked: maskKey(mode.apiKey), encrypted_at_rest: true, encryption: "AES-256-GCM" };
-      return { configured: true, mode: "env (shared key)", project_id: mode.projectId };
+      const routing = await getRoutingMode();
+      if (!mode) return { configured: false, routing, message: "Use wave_connect (credit-gated) or theta_configure (BYOK)." };
+      const base = { routing_mode: routing, routing_description: routing === "hybrid" ? "Base44 for light, Theta for heavy compute" : routing === "wave_os" ? "All through Wave OS backend" : "Direct to Theta (BYOK)" };
+      if (mode.mode === "wave_os") return { ...base, configured: true, mode: "wave_os (credit-gated)", workspace_id: mode.workspaceId, auth_token_masked: maskKey(mode.authToken), encrypted_at_rest: true, encryption: "AES-256-GCM" };
+      if (mode.mode === "byok") return { ...base, configured: true, mode: "byok", project_id: mode.projectId, api_key_masked: maskKey(mode.apiKey), encrypted_at_rest: true, encryption: "AES-256-GCM" };
+      return { ...base, configured: true, mode: "env (shared key)", project_id: mode.projectId };
     }
-    
-    case "theta_list_models":
-      return await thetaCompute("listModels");
-    
+
+    case "theta_list_models": return await thetaCompute("listModels");
+
     case "theta_run_inference": {
       validateMessages(args.messages);
       if (typeof args.model !== "string" || args.model.length > 100) throw new Error("Invalid model ID");
       return await thetaCompute("inference", { model: args.model, messages: args.messages, max_tokens: validateMaxTokens(args.max_tokens), temperature: validateTemperature(args.temperature) });
     }
-    
-    case "theta_check_gpu_status":
-      return await thetaCompute("gpuStatus");
-    
+
+    case "theta_check_gpu_status": return await thetaCompute("gpuStatus");
+
     case "theta_estimate_cost": {
       if (typeof args.model !== "string" || args.model.length > 100) throw new Error("Invalid model ID");
       const duration = Math.min(Math.max(Number(args.duration_minutes) || 0, 1), 1440);
       const credits = Math.ceil(duration * 4);
-      return { model: args.model, duration_minutes: duration, credits_needed: credits, estimated_tfuel: (credits * 0.15).toFixed(2), note: "Costs are approximate." };
+      return { model: args.model, duration_minutes: duration, credits_needed: credits, estimated_tfuel: (credits * 0.15).toFixed(2), note: "Costs are approximate. In hybrid mode, 4 Wave credits per inference call." };
     }
-    
+
     case "theta_deploy_contract": {
       const bytecode = validateHex(args.bytecode, 100000);
       if (!Array.isArray(args.abi)) throw new Error("ABI must be array");
       const constructorArgs = (args.constructor_args || []).map(a => validateHex(a));
       return await thetaRpc("eth_sendTransaction", [{ data: bytecode + constructorArgs.join(""), gas: "0x7A1200" }]);
     }
-    
+
     case "theta_read_contract": {
       const addr = validateEthAddress(args.contract_address);
       const sig = validateHex(args.function_signature, 100);
       const params = (args.params || []).map(p => validateHex(p, 10000));
       return await thetaRpc("eth_call", [{ to: addr, data: sig + params.join("") }, "latest"]);
     }
-    
+
     case "theta_get_balance": {
       const wallet = validateEthAddress(args.wallet_address);
       const tfuel = await thetaRpc("eth_getBalance", [wallet, "latest"]);
@@ -682,15 +716,14 @@ async function handleToolCall(name, args) {
       const wave = await thetaRpc("eth_call", [{ to: tokenContract, data: "0x70a08231000000000000000000000000" + wallet.slice(2) }, "latest"]);
       return { wallet, tfuel: (parseInt(tfuel, 16) / 1e18).toFixed(4), wave_token: (parseInt(wave, 16) / 1e18).toFixed(2) };
     }
-    
+
     case "theta_get_transaction": {
       if (typeof args.tx_hash !== "string" || args.tx_hash.length !== 66) throw new Error("Invalid tx hash");
       validateHex(args.tx_hash, 100);
       return await thetaRpc("eth_getTransactionByHash", [args.tx_hash]);
     }
-    
+
     // ── LAYER 3: WAVE OS INTELLIGENCE ──
-    
     case "wave_morning_briefing": {
       const wsId = validateFunctionName(args.workspace_id);
       return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/waveChiefOfStaff`, { method: "POST", body: JSON.stringify({ action: "morningBriefing", workspace_id: wsId, proactivity_level: ["low", "medium", "high"].includes(args.proactivity_level) ? args.proactivity_level : "medium" }) });
@@ -729,9 +762,8 @@ async function handleToolCall(name, args) {
       if (!msg) throw new Error("Message required");
       return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/waveChat`, { method: "POST", body: JSON.stringify({ action: "chat", workspace_id: wsId, message: msg, context: typeof args.context === "string" ? args.context.substring(0, 10000) : undefined }) });
     }
-    
-    default:
-      throw new Error(`Unknown tool: ${name}`);
+
+    default: throw new Error(`Unknown tool: ${name}`);
   }
 }
 
@@ -741,7 +773,8 @@ async function handleToolCall(name, args) {
 
 const resources = [
   { uri: "wave-os://app-info", name: "Wave OS App Info", description: "Connected app metadata", mimeType: "application/json" },
-  { uri: "wave-os://theta-config", name: "Theta Configuration", description: "Theta config (no secrets exposed)", mimeType: "application/json" },
+  { uri: "wave-os://theta-config", name: "Theta Configuration", description: "Theta config + compute routing (no secrets)", mimeType: "application/json" },
+  { uri: "wave-os://architecture", name: "Compute Architecture", description: "How compute is routed between Base44 and Theta", mimeType: "application/json" },
 ];
 
 async function handleReadResource(uri) {
@@ -750,13 +783,28 @@ async function handleReadResource(uri) {
       return JSON.stringify({ app_id: BASE44_APP_ID, name: "Wave OS", domain: "oswave.io", built_by: "xBuildy" }, null, 2);
     case "wave-os://theta-config": {
       const mode = await getThetaMode();
+      const routing = await getRoutingMode();
       return JSON.stringify({
         theta_mode: mode ? mode.mode : "none",
+        routing_mode: routing,
         billing_description: mode?.mode === "wave_os" ? "Credit-gated via Wave OS (4 credits/inference)" : mode?.mode === "byok" ? "Direct Theta billing (BYOK)" : mode?.mode === "env" ? "Shared key (env var)" : "Not configured",
         edge_url: THETA_EDGE_URL, rpc_url: THETA_RPC_URL,
         wave_token_contract: "0x93de35b55ace27cee301184e010de73518950753",
         writes_enabled: process.env.THETA_ALLOW_WRITES === "true",
         note: "API keys never exposed. BYOK/wave_connect tokens encrypted with AES-256-GCM.",
+      }, null, 2);
+    }
+    case "wave-os://architecture": {
+      const routing = await getRoutingMode();
+      return JSON.stringify({
+        routing_mode: routing,
+        layers: {
+          layer1_base44_data: { description: "Entity CRUD, file storage, backend functions", compute: "Base44 (always)", revenue_to: "Base44" },
+          layer2_theta_compute: { description: "AI inference, GPU compute", compute: routing === "direct" ? "Theta (direct)" : routing === "wave_os" ? "Base44 → Theta proxy" : "Hybrid: Base44 for metadata, Theta for inference", revenue_to: routing === "byok" || routing === "direct" ? "Theta (compute) + Base44 (platform)" : "Base44 (credits) → Theta (compute cost)" },
+          layer3_intelligence: { description: "Chief of Staff, triage, briefings, memory", compute: "Base44 backend (calls Theta internally)", revenue_to: "Base44" },
+        },
+        positioning: "Base44 = intelligence & orchestration layer. Theta = decentralized GPU compute. Every Theta call flows through a Base44 backend function — Base44 gets platform revenue, Theta gets compute revenue, users get cheaper AI than centralized alternatives.",
+        benefit_to_base44: "New developer audience via MCP, cheaper AI = more apps built, unique Web3 no-code platform, credit margin stays with Base44.",
       }, null, 2);
     }
     default: throw new Error(`Unknown resource: ${uri}`);
@@ -767,10 +815,9 @@ async function handleReadResource(uri) {
 // SERVER
 // ============================================================
 
-const server = new Server({ name: "wave-os-mcp-server", version: "1.2.0" }, { capabilities: { tools: {}, resources: {} } });
+const server = new Server({ name: "wave-os-mcp-server", version: "1.3.0" }, { capabilities: { tools: {}, resources: {} } });
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: tools.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) }));
-
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   try {
@@ -780,7 +827,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     return { content: [{ type: "text", text: `Error: ${sanitizeError(error)}` }], isError: true };
   }
 });
-
 server.setRequestHandler(ListResourcesRequestSchema, async () => ({ resources }));
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   try {
@@ -791,4 +837,5 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 validateConfig();
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error("Wave OS MCP Server v1.2.0 — credit-gated + BYOK + AES-256-GCM");
+console.error("Wave OS MCP Server v1.3.0 — hybrid compute routing + credit-gated + BYOK + AES-256-GCM");
+console.error("Architecture: Base44 (intelligence) → Theta (decentralized compute). Every Theta call flows through Base44.");
