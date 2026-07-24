@@ -440,15 +440,19 @@ async function thetaCompute(action: string, params: any = {}) {
   const billingMode = mode.mode === "byok" ? "byok" : "env";
   
   if (action === "listModels") {
-    const response = await fetchWithTimeout(`${edgeUrl}/api/v1/models`, { method: "GET", headers: { "x-api-key": apiKey } });
+    // List deployment templates (prototyping category)
+    const response = await fetchWithTimeout(`${edgeUrl}/deployment_template/list_standard_templates?category=prototyping`, { method: "GET", headers: { "x-api-key": apiKey } });
     if (!response.ok) throw new Error(`Theta API returned ${response.status}`);
-    return { models: await response.json(), billing_mode: billingMode, routing: routing };
+    const data = await response.json();
+    return { templates: data.body?.templates || [], total: data.body?.total_count || 0, billing_mode: billingMode, routing: routing };
   }
   
   if (action === "gpuStatus") {
-    const response = await fetchWithTimeout(`${edgeUrl}/api/v1/projects/${encodeURIComponent(projectId)}/instances`, { method: "GET", headers: { "x-api-key": apiKey } });
+    // List available VM types from Theta EdgeCloud
+    const response = await fetchWithTimeout(`https://api.thetaedgecloud.com/resource/vm/list`, { method: "GET", headers: { "x-api-key": apiKey } });
     if (!response.ok) throw new Error(`Theta API returned ${response.status}`);
-    return { status: await response.json(), billing_mode: billingMode, routing: routing };
+    const data = await response.json();
+    return { vms: data.body?.vms || [], project_id: projectId, billing_mode: billingMode, routing: routing };
   }
   
   if (action === "inference") {
@@ -675,7 +679,7 @@ async function handleToolCall(name, args) {
       const apiKey = validateThetaApiKey(args.api_key);
       const projectId = validateThetaProjectId(args.project_id);
       try {
-        const testResponse = await fetchWithTimeout(`${THETA_EDGE_URL}/api/v1/models`, { method: "GET", headers: { "x-api-key": apiKey } });
+        const testResponse = await fetchWithTimeout(`${THETA_EDGE_URL}/deployment_template/list_standard_templates?category=prototyping`, { method: "GET", headers: { "x-api-key": apiKey } });
         if (!testResponse.ok) throw new Error(`Theta API returned ${testResponse.status}`);
       } catch (e) { throw new Error(`Credential test failed: ${sanitizeError(e)}`); }
       await saveThetaCredentials(apiKey, projectId);
