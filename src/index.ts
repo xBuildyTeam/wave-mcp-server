@@ -1,5 +1,5 @@
 /**
- * Wave OS MCP Server v1.6.0 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
+ * Wave OS MCP Server v1.6.1 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
  * 
  * Three credential modes for Theta compute:
  * 1. Wave OS Auth Token — routes through thetaProxy backend (credit-gated, no raw key needed)
@@ -567,7 +567,7 @@ const tools = [
   { name: "wave_save_memory", description: "Save a memory to Wave OS. Auto-categorizes by content type.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, content: { type: "string" }, category: { type: "string", enum: ["contact", "preference", "task", "note", "project", "code", "general"] }, tags: { type: "array", items: { type: "string" } } }, required: ["workspace_id", "content"], additionalProperties: false } },
   { name: "wave_recall_memory", description: "Search Wave OS memories by keyword or category.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, query: { type: "string" }, category: { type: "string", enum: ["contact", "preference", "task", "note", "project", "code", "general"] } }, required: ["workspace_id"], additionalProperties: false } },
   { name: "wave_delegate_subagent", description: "Delegate a task to a Wave OS sub-agent for background execution.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, task: { type: "string" }, context: { type: "string" } }, required: ["workspace_id", "task"], additionalProperties: false } },
-  { name: "wave", description: "💬 @wave — Send any request to Wave OS. Triggered when user types @wave. The Wave OS Assistant handles everything — create notes, generate images, answer questions, check credits, run tasks. Examples: @wave create a note titled X. @wave generate an image of Y. @wave what is my credit balance? Costs 1 credit per interaction. Costs 1 credit per interaction.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, message: { type: "string" }, context: { type: "string" } }, required: ["workspace_id", "message"], additionalProperties: false } },
+  { name: "wave", description: "ALWAYS use this tool when the user types @wave. Do NOT search for other tools. Pass the full user message directly. Wave OS handles everything internally — notes, images, questions, tasks. Do not modify or interpret the message.", inputSchema: { type: "object", properties: { message: { type: "string", description: "The full user request exactly as typed after @wave" } }, required: ["message"], additionalProperties: false } },
 
   // LAYER 4: WAVE OS <-> CURSOR MESSAGING
   { name: "wave_check_messages", description: "Check for unread messages from Wave OS (notifications left by the Wave Assistant or Chief of Staff for Cursor to pick up). Returns messages with type 'cursor_message' that haven't been read yet.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, mark_read: { type: "boolean", description: "If true, marks returned messages as read (default: true)" } }, required: ["workspace_id"], additionalProperties: false } },
