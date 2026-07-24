@@ -1,5 +1,5 @@
 /**
- * Wave OS MCP Server v1.5.1 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
+ * Wave OS MCP Server v1.5.3 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
  * 
  * Three credential modes for Theta compute:
  * 1. Wave OS Auth Token — routes through thetaProxy backend (credit-gated, no raw key needed)
@@ -578,7 +578,7 @@ const tools = [
 // TOOL HANDLERS
 // ============================================================
 
-async function handleToolCall(name, args) {
+async function handleToolCall(name: string, args: any) {
   switch (name) {
     // ── LAYER 1: BASE44 ──
     case "list_entities":
@@ -933,7 +933,7 @@ const server = new Server({ name: "wave-os-mcp-server", version: "1.3.0" }, { ca
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: tools.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+  const { name, arguments: args }: { name: string; arguments: any } = request.params;
   
   // Log activity start to Wave OS chat (fire-and-forget, non-blocking)
   const activityMsg = formatActivity(name, args);
