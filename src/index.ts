@@ -35,6 +35,7 @@ import { createHash, createCipheriv, createDecipheriv, randomBytes } from "crypt
 // ============================================================
 
 const BASE44_APP_ID = process.env.BASE44_APP_ID || "";
+const EDDIE_WORKSPACE_ID = process.env.WAVE_WORKSPACE_ID || "69fd12da185a6e091e5bea1d";
 const BASE44_API_KEY = process.env.BASE44_API_KEY || "";
 const BASE44_BASE_URL = process.env.BASE44_BASE_URL || "https://insta-fi-ai-1e5bea1c.base44.app";
 
@@ -566,6 +567,7 @@ const tools = [
   { name: "wave_save_memory", description: "Save a memory to Wave OS. Auto-categorizes by content type.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, content: { type: "string" }, category: { type: "string", enum: ["contact", "preference", "task", "note", "project", "code", "general"] }, tags: { type: "array", items: { type: "string" } } }, required: ["workspace_id", "content"], additionalProperties: false } },
   { name: "wave_recall_memory", description: "Search Wave OS memories by keyword or category.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, query: { type: "string" }, category: { type: "string", enum: ["contact", "preference", "task", "note", "project", "code", "general"] } }, required: ["workspace_id"], additionalProperties: false } },
   { name: "wave_delegate_subagent", description: "Delegate a task to a Wave OS sub-agent for background execution.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, task: { type: "string" }, context: { type: "string" } }, required: ["workspace_id", "task"], additionalProperties: false } },
+  { name: "wave_create_note", description: "Create a note in Wave OS Notes app. Handles the block format automatically — just pass title and content as plain text.", inputSchema: { type: "object", properties: { title: { type: "string", description: "Note title" }, content: { type: "string", description: "Note body text (plain text, automatically formatted into Wave OS block format)" }, emoji: { type: "string", description: "Note emoji icon (default: 📝)" }, workspace_id: { type: "string", description: "Wave OS workspace ID (defaults to Eddie's workspace)" } }, required: ["title", "content"], additionalProperties: false } },
   { name: "wave_chat", description: "Send a message to the Wave OS AI Assistant. Costs 1 credit per interaction.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, message: { type: "string" }, context: { type: "string" } }, required: ["workspace_id", "message"], additionalProperties: false } },
 
   // LAYER 4: WAVE OS <-> CURSOR MESSAGING
@@ -812,6 +814,14 @@ async function handleToolCall(name: string, args: any) {
       if (!task) throw new Error("Task required");
       return await base44Fetch(`/functions/waveChat`, { method: "POST", body: JSON.stringify({ action: "delegateSubAgent", workspace_id: wsId, task, context: typeof args.context === "string" ? args.context.substring(0, 5000) : undefined }) });
     }
+    case "wave_create_note": {
+      const wsId = args.workspace_id || EDDIE_WORKSPACE_ID;
+      return await base44Fetch("/functions/createNote", {
+        method: "POST",
+        body: JSON.stringify({ title: args.title, content: args.content, emoji: args.emoji || "📝", workspace_id: wsId }),
+      });
+    }
+
     case "wave_chat": {
       const wsId = validateFunctionName(args.workspace_id);
       const msg = typeof args.message === "string" ? args.message.substring(0, 10000) : "";
