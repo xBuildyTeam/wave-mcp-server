@@ -864,6 +864,19 @@ async function handleToolCall(name: string, args: any) {
       return { sent: true, notification_id: Array.isArray(result) ? result[0]?.id : result?.id };
     }
 
+
+    case "wave_generate_image": {
+      if (typeof args.prompt !== "string" || args.prompt.length > 2000) throw new Error("Invalid prompt");
+      const validStyles = ["photorealistic", "digital-art", "anime", "3d-render", "cyberpunk", "minimalist"];
+      const style = validStyles.includes(args.style) ? args.style : "photorealistic";
+      const w = Math.min(Math.max(Number(args.width) || 1024, 256), 2048);
+      const h = Math.min(Math.max(Number(args.height) || 1024, 256), 2048);
+      return await base44Fetch("/functions/generateImage", {
+        method: "POST",
+        body: JSON.stringify({ prompt: args.prompt, style, width: w, height: h, seed: args.seed }),
+      });
+    }
+
     default: throw new Error(`Unknown tool: ${name}`);
   }
 }
@@ -896,17 +909,6 @@ async function handleReadResource(uri) {
       }, null, 2);
     }
 
-    case "wave_generate_image": {
-      if (typeof args.prompt !== "string" || args.prompt.length > 2000) throw new Error("Invalid prompt");
-      const validStyles = ["photorealistic", "digital-art", "anime", "3d-render", "cyberpunk", "minimalist"];
-      const style = validStyles.includes(args.style) ? args.style : "photorealistic";
-      const w = Math.min(Math.max(Number(args.width) || 1024, 256), 2048);
-      const h = Math.min(Math.max(Number(args.height) || 1024, 256), 2048);
-      return await base44Fetch("/functions/generateImage", {
-        method: "POST",
-        body: JSON.stringify({ prompt: args.prompt, style, width: w, height: h, seed: args.seed }),
-      });
-    }
 
     case "wave-os://architecture": {
       const routing = await getRoutingMode();
@@ -969,5 +971,5 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 validateConfig();
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error("Wave OS MCP Server v1.5.4 — hybrid compute routing + credit-gated + BYOK + AES-256-GCM");
+console.error("Wave OS MCP Server v1.5.5 — hybrid compute routing + credit-gated + BYOK + AES-256-GCM");
 console.error("Architecture: Base44 (intelligence) → Theta (decentralized compute). Every Theta call flows through Base44.");
