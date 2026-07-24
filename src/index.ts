@@ -1,5 +1,5 @@
 /**
- * Wave OS MCP Server v1.5.3 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
+ * Wave OS MCP Server v1.6.0 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
  * 
  * Three credential modes for Theta compute:
  * 1. Wave OS Auth Token — routes through thetaProxy backend (credit-gated, no raw key needed)
@@ -567,15 +567,11 @@ const tools = [
   { name: "wave_save_memory", description: "Save a memory to Wave OS. Auto-categorizes by content type.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, content: { type: "string" }, category: { type: "string", enum: ["contact", "preference", "task", "note", "project", "code", "general"] }, tags: { type: "array", items: { type: "string" } } }, required: ["workspace_id", "content"], additionalProperties: false } },
   { name: "wave_recall_memory", description: "Search Wave OS memories by keyword or category.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, query: { type: "string" }, category: { type: "string", enum: ["contact", "preference", "task", "note", "project", "code", "general"] } }, required: ["workspace_id"], additionalProperties: false } },
   { name: "wave_delegate_subagent", description: "Delegate a task to a Wave OS sub-agent for background execution.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, task: { type: "string" }, context: { type: "string" } }, required: ["workspace_id", "task"], additionalProperties: false } },
-  { name: "wavenotes", description: "📱 @wavenotes — Request Wave OS Assistant to create a note. Triggered when user types @wavenotes. This sends the request through the Wave OS Assistant, which creates the note and posts a confirmation in the Wave OS chat. Usage: @wavenotes titled [title]. [content]. The note appears in the Wave OS Notes app and the action is logged in the Wave Assistant activity feed.", inputSchema: { type: "object", properties: { title: { type: "string", description: "Note title" }, content: { type: "string", description: "Note body text (plain text)" }, emoji: { type: "string", description: "Note emoji icon (default: 📝)" } }, required: ["title", "content"], additionalProperties: false } },
-  { name: "wavechat", description: "💬 @wavechat — Send a message to the Wave OS AI Assistant. Triggered when user types @wavechat. Costs 1 credit per interaction. Costs 1 credit per interaction.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, message: { type: "string" }, context: { type: "string" } }, required: ["workspace_id", "message"], additionalProperties: false } },
+  { name: "wave", description: "💬 @wave — Send any request to Wave OS. Triggered when user types @wave. The Wave OS Assistant handles everything — create notes, generate images, answer questions, check credits, run tasks. Examples: @wave create a note titled X. @wave generate an image of Y. @wave what is my credit balance? Costs 1 credit per interaction. Costs 1 credit per interaction.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, message: { type: "string" }, context: { type: "string" } }, required: ["workspace_id", "message"], additionalProperties: false } },
 
   // LAYER 4: WAVE OS <-> CURSOR MESSAGING
   { name: "wave_check_messages", description: "Check for unread messages from Wave OS (notifications left by the Wave Assistant or Chief of Staff for Cursor to pick up). Returns messages with type 'cursor_message' that haven't been read yet.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, mark_read: { type: "boolean", description: "If true, marks returned messages as read (default: true)" } }, required: ["workspace_id"], additionalProperties: false } },
   { name: "wave_send_message", description: "Send a message from Cursor back to Wave OS. Creates a notification that the Wave Assistant can display. Enables bidirectional Cursor <-> Wave OS communication.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, title: { type: "string" }, message: { type: "string" }, source: { type: "string", description: "Identifier for the message source, e.g. 'cursor' (default: 'cursor')" } }, required: ["workspace_id", "message"], additionalProperties: false } },
-  { name: "waveimage", description: "🎨 @waveimage — Generate an AI image through Wave OS GPU compute layer. Triggered when user types @waveimage. Returns image URL directly. 2 credits per image. Styles: photorealistic, digital-art, anime, 3d-render, cyberpunk, minimalist.", inputSchema: { type: "object", properties: { prompt: { type: "string", description: "Image generation prompt (max 2000 chars)" }, style: { type: "string", enum: ["photorealistic", "digital-art", "anime", "3d-render", "cyberpunk", "minimalist"], default: "photorealistic" }, width: { type: "number", default: 1024 }, height: { type: "number", default: 1024 }, seed: { type: "number" } }, required: ["prompt"], additionalProperties: false } },
-];
-
 // ============================================================
 // TOOL HANDLERS
 // ============================================================
@@ -822,7 +818,7 @@ async function handleToolCall(name: string, args: any) {
       });
     }
 
-    case "wavechat": {
+    case "wave": {
       const wsId = validateFunctionName(args.workspace_id);
       const msg = typeof args.message === "string" ? args.message.substring(0, 10000) : "";
       if (!msg) throw new Error("Message required");
@@ -955,7 +951,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const result = await handleToolCall(name, args);
     
     // Log completion for specific tools with result data
-    if (name === "waveimage" && result && result.image_url) {
+    if (name === "wave" && result && result.image_url) {
       logCursorActivity("✅ Image generated! " + (result.credits_deducted || 2) + " credits deducted. Image URL ready in Cursor.");
     } else if (name === "wave_morning_briefing" && result) {
       logCursorActivity("✅ Morning briefing delivered to Cursor.");
