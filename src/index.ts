@@ -533,7 +533,8 @@ const tools = [
 
   // LAYER 4: WAVE OS <-> CURSOR MESSAGING
   { name: "wave_check_messages", description: "Check for unread messages from Wave OS (notifications left by the Wave Assistant or Chief of Staff for Cursor to pick up). Returns messages with type 'cursor_message' that haven't been read yet.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, mark_read: { type: "boolean", description: "If true, marks returned messages as read (default: true)" } }, required: ["workspace_id"], additionalProperties: false } },
-  { name: "wave_send_message", description: "Send a message from Cursor back to Wave OS. Creates a notification that the Wave Assistant can display. Enables bidirectional Cursor <-> Wave OS communication.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, title: { type: "string" }, message: { type: "string" }, source: { type: "string", description: "Identifier for the message source, e.g. 'cursor' (default: 'cursor')" } }, required: ["workspace_id", "message"], additionalProperties: false } },
+  { name: "wave_send_message", description: "Send a message from Cursor back to Wave OS. Creates a notification that the Wave Assistant can display. Enables bidirectional Cursor <-> Wave OS communication.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" },
+    { name: "wave_generate_image", description: "Generate an AI image through Wave OS GPU compute layer. Returns image URL directly. 2 credits per image. Styles: photorealistic, digital-art, anime, 3d-render, cyberpunk, minimalist.", inputSchema: { type: "object", properties: { prompt: { type: "string", description: "Image generation prompt (max 2000 chars)" }, style: { type: "string", enum: ["photorealistic", "digital-art", "anime", "3d-render", "cyberpunk", "minimalist"], default: "photorealistic" }, width: { type: "number", default: 1024 }, height: { type: "number", default: 1024 }, seed: { type: "number" } }, required: ["prompt"], additionalProperties: false } }, title: { type: "string" }, message: { type: "string" }, source: { type: "string", description: "Identifier for the message source, e.g. 'cursor' (default: 'cursor')" } }, required: ["workspace_id", "message"], additionalProperties: false } },
 ];
 
 // ============================================================
@@ -857,6 +858,19 @@ async function handleReadResource(uri) {
         note: "API keys never exposed. BYOK/wave_connect tokens encrypted with AES-256-GCM.",
       }, null, 2);
     }
+
+    case "wave_generate_image": {
+      if (typeof args.prompt !== "string" || args.prompt.length > 2000) throw new Error("Invalid prompt");
+      const validStyles = ["photorealistic", "digital-art", "anime", "3d-render", "cyberpunk", "minimalist"];
+      const style = validStyles.includes(args.style) ? args.style : "photorealistic";
+      const w = Math.min(Math.max(Number(args.width) || 1024, 256), 2048);
+      const h = Math.min(Math.max(Number(args.height) || 1024, 256), 2048);
+      return await base44Fetch("/functions/generateImage", {
+        method: "POST",
+        body: JSON.stringify({ prompt: args.prompt, style, width: w, height: h, seed: args.seed }),
+      });
+    }
+
     case "wave-os://architecture": {
       const routing = await getRoutingMode();
       return JSON.stringify({
