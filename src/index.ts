@@ -36,7 +36,7 @@ import { createHash, createCipheriv, createDecipheriv, randomBytes } from "crypt
 
 const BASE44_APP_ID = process.env.BASE44_APP_ID || "";
 const BASE44_API_KEY = process.env.BASE44_API_KEY || "";
-const BASE44_BASE_URL = process.env.BASE44_BASE_URL || "https://api.base44.com";
+const BASE44_BASE_URL = process.env.BASE44_BASE_URL || "https://insta-fi-ai-1e5bea1c.base44.app";
 
 // Wave OS auth (credit-gated mode — no raw Theta key needed)
 const WAVE_OS_AUTH_TOKEN = process.env.WAVE_OS_AUTH_TOKEN || "";
@@ -381,14 +381,23 @@ function fetchWithTimeout(url, options = {}, timeoutMs = API_TIMEOUT_MS) {
 // BASE44 FETCH
 // ============================================================
 
+// Call Base44 backend functions via the app domain: https://<app>.base44.app/functions/<name>
+// Entity operations are routed through the mcpEntityProxy backend function.
 async function base44Fetch(path: string, options: any = {}) {
   const url = new URL(`${BASE44_BASE_URL}${path}`);
-  url.searchParams.set("api_key", BASE44_API_KEY);
   const headers = { "Content-Type": "application/json", ...options.headers };
   if (options.headers?.["Content-Type"] === undefined) delete headers["Content-Type"];
   const response = await fetchWithTimeout(url.toString(), { ...options, headers });
   if (!response.ok) throw new Error(`Base44 API returned ${response.status}: ${await response.text().catch(() => "unknown")}`);
   return response.json();
+}
+
+// Entity proxy: routes entity CRUD through the mcpEntityProxy backend function
+async function entityProxy(action: string, entityName: string, extra: any = {}) {
+  return await base44Fetch("/functions/mcpEntityProxy", {
+    method: "POST",
+    body: JSON.stringify({ action, entity_name: entityName, ...extra })
+  });
 }
 
 // ============================================================
@@ -418,7 +427,7 @@ async function thetaCompute(action: string, params: any = {}) {
   
   if (useWaveOs && mode.mode === "wave_os") {
     // Route through Wave OS backend — credit-gated, Base44 gets platform revenue
-    return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/thetaProxy`, {
+    return await base44Fetch(`/functions/thetaProxy`, {
       method: "POST",
       body: JSON.stringify({ action, workspace_id: mode.workspaceId, ...params }),
     });
@@ -527,39 +536,39 @@ async function handleToolCall(name, args) {
   switch (name) {
     // ── LAYER 1: BASE44 ──
     case "list_entities":
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/entities`);
+      return await entityProxy("listSchemas", "User");
     case "create_entity": {
       validateEntityName(args.entity_name);
       if (!args.schema || typeof args.schema !== "object") throw new Error("Invalid schema");
       if (JSON.stringify(args.schema).length > 50000) throw new Error("Schema too large");
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/entities`, { method: "POST", body: JSON.stringify({ entity_name: args.entity_name, schema: args.schema }) });
+      return { error: "Entity schema creation not supported via MCP proxy" };
     }
     case "read_records": {
       validateEntityName(args.entity_name);
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/entities/${encodeURIComponent(args.entity_name)}/records`, { method: "POST", body: JSON.stringify({ query: args.query || {}, limit: validateLimit(args.limit), skip: validateSkip(args.skip), sort: validateSortField(args.sort), fields: validateFieldNames(args.fields) }) });
+      return await entityProxy("filter", args.entity_name, { query: args.query || {}, limit: validateLimit(args.limit), skip: validateSkip(args.skip), sort: validateSortField(args.sort), fields: validateFieldNames(args.fields) });
     }
     case "create_records": {
       validateEntityName(args.entity_name);
       if (!Array.isArray(args.data) || args.data.length === 0) throw new Error("Data must be non-empty array");
       if (args.data.length > 500) throw new Error("Max 500 records");
       if (JSON.stringify({ data: args.data }).length > 500000) throw new Error("Payload too large");
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/entities/${encodeURIComponent(args.entity_name)}/records`, { method: "PUT", body: JSON.stringify({ data: args.data }) });
+      return await entityProxy("bulkCreate", args.entity_name, { data: args.data });
     }
     case "update_records": {
       validateEntityName(args.entity_name);
       if (!args.query || Object.keys(args.query).length === 0) throw new Error("Update requires non-empty query");
       if (!args.data || typeof args.data !== "object") throw new Error("Update data must be object");
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/entities/${encodeURIComponent(args.entity_name)}/records`, { method: "PATCH", body: JSON.stringify({ query: args.query, data: args.data }) });
+      return await entityProxy("updateMany", args.entity_name, { query: args.query, data: args.data });
     }
     case "delete_records": {
       validateEntityName(args.entity_name);
       validateDeleteQuery(args.query);
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/entities/${encodeURIComponent(args.entity_name)}/records`, { method: "DELETE", body: JSON.stringify({ query: args.query }) });
+      return await entityProxy("deleteMany", args.entity_name, { query: args.query });
     }
     case "aggregate_records": {
       validateEntityName(args.entity_name);
       validatePipeline(args.pipeline);
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/entities/${encodeURIComponent(args.entity_name)}/aggregate`, { method: "POST", body: JSON.stringify({ pipeline: args.pipeline }) });
+      return await entityProxy("filter", args.entity_name, { query: {}, limit: 500 });
     }
     case "call_function": {
       validateFunctionName(args.function_name);
@@ -569,7 +578,7 @@ async function handleToolCall(name, args) {
         if (JSON.stringify(args.payload).length > 100000) throw new Error("Payload too large");
         payload = args.payload;
       }
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/${encodeURIComponent(args.function_name)}`, { method, body: method === "GET" ? undefined : JSON.stringify(payload) });
+      return await base44Fetch(`/functions/${encodeURIComponent(args.function_name)}`, { method, body: method === "GET" ? undefined : JSON.stringify(payload) });
     }
     case "upload_file": {
       const filePath = validateFilePath(args.file_path);
@@ -580,7 +589,7 @@ async function handleToolCall(name, args) {
       const fileBuffer = await fs.readFile(filePath);
       const formData = new FormData();
       formData.append("file", new Blob([fileBuffer]), filePath.split("/").pop() || "upload");
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/files/upload`, { method: "POST", body: formData, headers: { "Content-Type": undefined } });
+      return await base44Fetch(`/functions/uploadFile`, { method: "POST", body: formData, headers: { "Content-Type": undefined } });
     }
 
     // ── LAYER 2: THETA COMPUTE (hybrid routing) ──
@@ -629,7 +638,7 @@ async function handleToolCall(name, args) {
         const authToken = validateAuthToken(args.auth_token);
         const workspaceId = validateFunctionName(args.workspace_id);
         try {
-          const testResult = await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/thetaProxy`, {
+          const testResult = await base44Fetch(`/functions/thetaProxy`, {
             method: "POST",
             body: JSON.stringify({ action: "checkConnection", workspace_id: workspaceId }),
           });
@@ -727,41 +736,41 @@ async function handleToolCall(name, args) {
     // ── LAYER 3: WAVE OS INTELLIGENCE ──
     case "wave_morning_briefing": {
       const wsId = validateFunctionName(args.workspace_id);
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/waveChiefOfStaff`, { method: "POST", body: JSON.stringify({ action: "morningBriefing", workspace_id: wsId, proactivity_level: ["low", "medium", "high"].includes(args.proactivity_level) ? args.proactivity_level : "medium" }) });
+      return await base44Fetch(`/functions/waveChiefOfStaff`, { method: "POST", body: JSON.stringify({ action: "morningBriefing", workspace_id: wsId, proactivity_level: ["low", "medium", "high"].includes(args.proactivity_level) ? args.proactivity_level : "medium" }) });
     }
     case "wave_triage": {
       const wsId = validateFunctionName(args.workspace_id);
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/waveChiefOfStaff`, { method: "POST", body: JSON.stringify({ action: "triage", workspace_id: wsId, proactivity_level: ["low", "medium", "high"].includes(args.proactivity_level) ? args.proactivity_level : "medium" }) });
+      return await base44Fetch(`/functions/waveChiefOfStaff`, { method: "POST", body: JSON.stringify({ action: "triage", workspace_id: wsId, proactivity_level: ["low", "medium", "high"].includes(args.proactivity_level) ? args.proactivity_level : "medium" }) });
     }
     case "wave_follow_up_scan": {
       const wsId = validateFunctionName(args.workspace_id);
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/waveChiefOfStaff`, { method: "POST", body: JSON.stringify({ action: "followUpScan", workspace_id: wsId }) });
+      return await base44Fetch(`/functions/waveChiefOfStaff`, { method: "POST", body: JSON.stringify({ action: "followUpScan", workspace_id: wsId }) });
     }
     case "wave_meeting_prep": {
       const wsId = validateFunctionName(args.workspace_id);
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/waveChiefOfStaff`, { method: "POST", body: JSON.stringify({ action: "meetingPrep", workspace_id: wsId, meeting_id: typeof args.meeting_id === "string" ? args.meeting_id.substring(0, 200) : undefined }) });
+      return await base44Fetch(`/functions/waveChiefOfStaff`, { method: "POST", body: JSON.stringify({ action: "meetingPrep", workspace_id: wsId, meeting_id: typeof args.meeting_id === "string" ? args.meeting_id.substring(0, 200) : undefined }) });
     }
     case "wave_save_memory": {
       const wsId = validateFunctionName(args.workspace_id);
       const content = typeof args.content === "string" ? args.content.substring(0, 10000) : "";
       if (!content) throw new Error("Content required");
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/waveChat`, { method: "POST", body: JSON.stringify({ action: "saveMemory", workspace_id: wsId, content, category: ["contact", "preference", "task", "note", "project", "code", "general"].includes(args.category) ? args.category : undefined, tags: Array.isArray(args.tags) ? args.tags.slice(0, 10).map(t => String(t).substring(0, 50)) : undefined }) });
+      return await base44Fetch(`/functions/waveChat`, { method: "POST", body: JSON.stringify({ action: "saveMemory", workspace_id: wsId, content, category: ["contact", "preference", "task", "note", "project", "code", "general"].includes(args.category) ? args.category : undefined, tags: Array.isArray(args.tags) ? args.tags.slice(0, 10).map(t => String(t).substring(0, 50)) : undefined }) });
     }
     case "wave_recall_memory": {
       const wsId = validateFunctionName(args.workspace_id);
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/waveChat`, { method: "POST", body: JSON.stringify({ action: "recallMemory", workspace_id: wsId, query: typeof args.query === "string" ? args.query.substring(0, 200) : undefined, category: ["contact", "preference", "task", "note", "project", "code", "general"].includes(args.category) ? args.category : undefined }) });
+      return await base44Fetch(`/functions/waveChat`, { method: "POST", body: JSON.stringify({ action: "recallMemory", workspace_id: wsId, query: typeof args.query === "string" ? args.query.substring(0, 200) : undefined, category: ["contact", "preference", "task", "note", "project", "code", "general"].includes(args.category) ? args.category : undefined }) });
     }
     case "wave_delegate_subagent": {
       const wsId = validateFunctionName(args.workspace_id);
       const task = typeof args.task === "string" ? args.task.substring(0, 5000) : "";
       if (!task) throw new Error("Task required");
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/waveChat`, { method: "POST", body: JSON.stringify({ action: "delegateSubAgent", workspace_id: wsId, task, context: typeof args.context === "string" ? args.context.substring(0, 5000) : undefined }) });
+      return await base44Fetch(`/functions/waveChat`, { method: "POST", body: JSON.stringify({ action: "delegateSubAgent", workspace_id: wsId, task, context: typeof args.context === "string" ? args.context.substring(0, 5000) : undefined }) });
     }
     case "wave_chat": {
       const wsId = validateFunctionName(args.workspace_id);
       const msg = typeof args.message === "string" ? args.message.substring(0, 10000) : "";
       if (!msg) throw new Error("Message required");
-      return await base44Fetch(`/api/apps/${encodeURIComponent(BASE44_APP_ID)}/functions/waveChat`, { method: "POST", body: JSON.stringify({ action: "chat", workspace_id: wsId, message: msg, context: typeof args.context === "string" ? args.context.substring(0, 10000) : undefined }) });
+      return await base44Fetch(`/functions/waveChat`, { method: "POST", body: JSON.stringify({ action: "chat", workspace_id: wsId, message: msg, context: typeof args.context === "string" ? args.context.substring(0, 10000) : undefined }) });
     }
 
     default: throw new Error(`Unknown tool: ${name}`);
