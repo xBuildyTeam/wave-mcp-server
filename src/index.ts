@@ -1,5 +1,5 @@
 /**
- * Wave OS MCP Server v1.6.3 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
+ * Wave OS MCP Server v1.7.0 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
  * 
  * Three credential modes for Theta compute:
  * 1. Wave OS Auth Token — routes through thetaProxy backend (credit-gated, no raw key needed)
@@ -821,63 +821,56 @@ async function handleToolCall(name: string, args: any) {
     }
 
     case "wave": {
-      const wsId = EDDIE_WORKSPACE_ID;
+      // Simply post the message into the Wave OS Assistant chat as a user message.
+      // Wave OS reads it from the ChatMessage entity and handles everything — 
+      // notes, images, tasks — exactly as if Eddie typed it into the desktop UI.
       const msg = typeof args.message === "string" ? args.message.trim() : "";
       if (!msg) throw new Error("Message required");
 
-      // SERVER-SIDE INTENT ROUTING — Cursor never sees a failure
+      // Get or create the Wave Assistant conversation
+      const convResult = await base44Fetch("/functions/conversationManager", {
+        method: "POST",
+        body: JSON.stringify({ action: "getOrCreate", workspace_id: EDDIE_WORKSPACE_ID })
+      });
+      const convData = typeof convResult === "string" ? JSON.parse(convResult) : convResult;
+      const conversationId = convData?.conversation_id || convData?.data?.conversation_id || convData?.id;
 
-      // Intent: create/make/add a note
-      const noteMatch = msg.match(/(?:create|make|add|write)\s+(?:a\s+)?note\s+(?:titled?|called|named)\s+[""]?([^"".\n]+?)[""]?(?:\s*\.\s*|\s*—\s*|\s+)(.+)/i);
-      if (noteMatch) {
-        const noteTitle = noteMatch[1].trim();
-        const noteContent = noteMatch[2].trim();
-        validateEntityName("Note");
-        const note = await entityProxy("create", "Note", {
-          data: {
-            title: noteTitle,
-            emoji: "📝",
-            blocks: [{ id: crypto.randomUUID(), type: "paragraph", content: noteContent }],
-            workspace_id: wsId,
-            is_archived: false,
-            is_pinned: false,
-            tags: [],
-            parent_folder_id: null
-          }
-        });
-        // Log activity as a chat bubble in the Cursor conversation
-        try {
-          await entityProxy("create", "ChatMessage", {
-            data: {
-              conversation_id: "6a62e00ec8143266c5b313d0",
-              sender_id: "cursor-mcp",
-              sender_name: "Cursor",
-              content: "📝 Created note **" + noteTitle + "**\n\n> " + noteContent,
-              message_type: "cursor_action",
-              read_by: []
-            }
-          });
-        } catch(_) {}
-        return { content: [{ type: "text", text: "✅ Wave OS created your note!\n\nTitle: " + noteTitle + "\nContent: " + noteContent + "\n\nYour note is now visible in the Wave OS Notes app." }] };
+      if (!conversationId) {
+        throw new Error("Could not get Wave Assistant conversation ID");
       }
 
-      // Intent: generate/create/make an image
-      const imageMatch = msg.match(/(?:generate|create|make|draw)\s+(?:an?\s+)?image\s+(?:of\s+|showing\s+|depicting\s+|that\s+shows?\s+)?(.+)/i);
-      if (imageMatch) {
-        const imagePrompt = imageMatch[1].trim();
-        const imageResult = await base44Fetch("/functions/generateImage", { method: "POST", body: JSON.stringify({ prompt: imagePrompt, workspace_id: wsId }) });
-        const imgData = typeof imageResult === "string" ? JSON.parse(imageResult) : imageResult;
-        const imgUrl = imgData?.data?.image_url || imgData?.image_url || "";
-        return { content: [{ type: "text", text: "🎨 Wave OS generated your image!\n\nPrompt: " + imagePrompt + (imgUrl ? "\n\nURL: " + imgUrl : "\n\nImage saved to Wave OS Image Studio.") }] };
-      }
+      // Post the message as a user message — Wave OS will see it and respond
+      validateEntityName("ChatMessage");
+      await entityProxy("create", "ChatMessage", {
+        data: {
+          conversation_id: conversationId,
+          sender_id: EDDIE_WORKSPACE_ID,
+          sender_name: "Cursor",
+          content: msg,
+          message_type: "text",
+          read_by: []
+        }
+      });
 
-      // Default: pass to waveChat, but return a clean message even if it fails
-      try {
-        return await base44Fetch("/functions/waveChat", { method: "POST", body: JSON.stringify({ action: "chat", workspace_id: wsId, message: msg }) });
-      } catch(e) {
-        return { content: [{ type: "text", text: "Wave OS received your message: \"" + msg + "\"\n\nThe Wave Assistant is processing your request. Check the Wave OS chat panel for a response." }] };
-      }
+      // Update the conversation's last message preview so the UI refreshes
+      validateEntityName("Conversation");
+      await entityProxy("update", "Conversation", {
+        query: { id: conversationId },
+        data: {
+          last_message_preview: msg.substring(0, 100),
+          last_message_at: new Date().toISOString(),
+          last_sender_name: "Cursor"
+        }
+      });
+
+      return {
+        content: [{
+          type: "text",
+          text: "✅ Message sent to Wave OS Assistant: \"" + msg + "\"\n\nWave OS will process your request and you\'ll see the result in the Wave Assistant chat on the desktop."
+        }]
+      };
     }
+
 
     // ── LAYER 4: WAVE OS <-> CURSOR MESSAGING ──
     case "wave_check_messages": {
