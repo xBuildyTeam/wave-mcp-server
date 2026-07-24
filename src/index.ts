@@ -933,7 +933,7 @@ const server = new Server({ name: "wave-os-mcp-server", version: "1.3.0" }, { ca
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: tools.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args }: { name: string; arguments: any } = request.params;
+  const { name, arguments: args } = request.params as any;
   
   // Log activity start to Wave OS chat (fire-and-forget, non-blocking)
   const activityMsg = formatActivity(name, args);
@@ -969,5 +969,5 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 validateConfig();
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error("Wave OS MCP Server v1.5.1 — hybrid compute routing + credit-gated + BYOK + AES-256-GCM");
+console.error("Wave OS MCP Server v1.5.4 — hybrid compute routing + credit-gated + BYOK + AES-256-GCM");
 console.error("Architecture: Base44 (intelligence) → Theta (decentralized compute). Every Theta call flows through Base44.");
