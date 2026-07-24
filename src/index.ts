@@ -1,5 +1,5 @@
 /**
- * Wave OS MCP Server v1.3.0 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
+ * Wave OS MCP Server v1.4.0 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
  * 
  * Three credential modes for Theta compute:
  * 1. Wave OS Auth Token — routes through thetaProxy backend (credit-gated, no raw key needed)
@@ -526,6 +526,10 @@ const tools = [
   { name: "wave_recall_memory", description: "Search Wave OS memories by keyword or category.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, query: { type: "string" }, category: { type: "string", enum: ["contact", "preference", "task", "note", "project", "code", "general"] } }, required: ["workspace_id"], additionalProperties: false } },
   { name: "wave_delegate_subagent", description: "Delegate a task to a Wave OS sub-agent for background execution.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, task: { type: "string" }, context: { type: "string" } }, required: ["workspace_id", "task"], additionalProperties: false } },
   { name: "wave_chat", description: "Send a message to the Wave OS AI Assistant. Costs 1 credit per interaction.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, message: { type: "string" }, context: { type: "string" } }, required: ["workspace_id", "message"], additionalProperties: false } },
+
+  // LAYER 4: WAVE OS <-> CURSOR MESSAGING
+  { name: "wave_check_messages", description: "Check for unread messages from Wave OS (notifications left by the Wave Assistant or Chief of Staff for Cursor to pick up). Returns messages with type 'cursor_message' that haven't been read yet.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, mark_read: { type: "boolean", description: "If true, marks returned messages as read (default: true)" } }, required: ["workspace_id"], additionalProperties: false } },
+  { name: "wave_send_message", description: "Send a message from Cursor back to Wave OS. Creates a notification that the Wave Assistant can display. Enables bidirectional Cursor <-> Wave OS communication.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, title: { type: "string" }, message: { type: "string" }, source: { type: "string", description: "Identifier for the message source, e.g. 'cursor' (default: 'cursor')" } }, required: ["workspace_id", "message"], additionalProperties: false } },
 ];
 
 // ============================================================
@@ -773,6 +777,64 @@ async function handleToolCall(name, args) {
       return await base44Fetch(`/functions/waveChat`, { method: "POST", body: JSON.stringify({ action: "chat", workspace_id: wsId, message: msg, context: typeof args.context === "string" ? args.context.substring(0, 10000) : undefined }) });
     }
 
+    // ── LAYER 4: WAVE OS <-> CURSOR MESSAGING ──
+    case "wave_check_messages": {
+      const wsId = validateFunctionName(args.workspace_id);
+      const markRead = args.mark_read !== false;
+      // Read unread notifications with type "cursor_message"
+      const notifications = await base44Fetch(`/functions/mcpEntityProxy`, {
+        method: "POST",
+        body: JSON.stringify({
+          action: "read",
+          entity_name: "Notification",
+          query: { type: "cursor_message", is_read: false },
+          sort: "-created_date",
+          limit: 20
+        })
+      });
+      // Mark as read if requested
+      if (markRead && Array.isArray(notifications) && notifications.length > 0) {
+        for (const n of notifications) {
+          await base44Fetch(`/functions/mcpEntityProxy`, {
+            method: "POST",
+            body: JSON.stringify({
+              action: "update",
+              entity_name: "Notification",
+              query: { id: n.id },
+              data: { is_read: true }
+            })
+          });
+        }
+      }
+      return { messages: notifications || [], count: notifications ? notifications.length : 0 };
+    }
+
+    case "wave_send_message": {
+      const wsId = validateFunctionName(args.workspace_id);
+      const title = typeof args.title === "string" ? args.title.substring(0, 200) : "Message from Cursor";
+      const msg = typeof args.message === "string" ? args.message.substring(0, 10000) : "";
+      if (!msg) throw new Error("Message required");
+      const source = typeof args.source === "string" ? args.source.substring(0, 50) : "cursor";
+      // Create a notification that Wave OS can display
+      const result = await base44Fetch(`/functions/mcpEntityProxy`, {
+        method: "POST",
+        body: JSON.stringify({
+          action: "create",
+          entity_name: "Notification",
+          data: [{
+            title: title,
+            message: msg,
+            type: "wave_os_message",
+            is_read: false,
+            source_id: source,
+            source_name: "Cursor IDE",
+            link: null
+          }]
+        })
+      });
+      return { sent: true, notification_id: Array.isArray(result) ? result[0]?.id : result?.id };
+    }
+
     default: throw new Error(`Unknown tool: ${name}`);
   }
 }
@@ -847,5 +909,5 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 validateConfig();
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error("Wave OS MCP Server v1.3.0 — hybrid compute routing + credit-gated + BYOK + AES-256-GCM");
+console.error("Wave OS MCP Server v1.4.0 — hybrid compute routing + credit-gated + BYOK + AES-256-GCM");
 console.error("Architecture: Base44 (intelligence) → Theta (decentralized compute). Every Theta call flows through Base44.");
