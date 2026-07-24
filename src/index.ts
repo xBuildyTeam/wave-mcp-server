@@ -782,31 +782,22 @@ async function handleToolCall(name, args) {
       const wsId = validateFunctionName(args.workspace_id);
       const markRead = args.mark_read !== false;
       // Read unread notifications with type "cursor_message"
-      const notifications = await base44Fetch(`/functions/mcpEntityProxy`, {
-        method: "POST",
-        body: JSON.stringify({
-          action: "read",
-          entity_name: "Notification",
-          query: { type: "cursor_message", is_read: false },
-          sort: "-created_date",
-          limit: 20
-        })
+      validateEntityName("Notification");
+      const notifications = await entityProxy("filter", "Notification", {
+        query: { type: "cursor_message", is_read: false },
+        sort: "-created_date",
+        limit: 20
       });
       // Mark as read if requested
       if (markRead && Array.isArray(notifications) && notifications.length > 0) {
         for (const n of notifications) {
-          await base44Fetch(`/functions/mcpEntityProxy`, {
-            method: "POST",
-            body: JSON.stringify({
-              action: "update",
-              entity_name: "Notification",
-              query: { id: n.id },
-              data: { is_read: true }
-            })
+          await entityProxy("update", "Notification", {
+            query: { id: n.id },
+            data: { is_read: true }
           });
         }
       }
-      return { messages: notifications || [], count: notifications ? notifications.length : 0 };
+      return { messages: notifications || [], count: Array.isArray(notifications) ? notifications.length : 0 };
     }
 
     case "wave_send_message": {
@@ -816,21 +807,17 @@ async function handleToolCall(name, args) {
       if (!msg) throw new Error("Message required");
       const source = typeof args.source === "string" ? args.source.substring(0, 50) : "cursor";
       // Create a notification that Wave OS can display
-      const result = await base44Fetch(`/functions/mcpEntityProxy`, {
-        method: "POST",
-        body: JSON.stringify({
-          action: "create",
-          entity_name: "Notification",
-          data: [{
-            title: title,
-            message: msg,
-            type: "wave_os_message",
-            is_read: false,
-            source_id: source,
-            source_name: "Cursor IDE",
-            link: null
-          }]
-        })
+      validateEntityName("Notification");
+      const result = await entityProxy("bulkCreate", "Notification", {
+        data: [{
+          title: title,
+          message: msg,
+          type: "wave_os_message",
+          is_read: false,
+          source_id: source,
+          source_name: "Cursor IDE",
+          link: null
+        }]
       });
       return { sent: true, notification_id: Array.isArray(result) ? result[0]?.id : result?.id };
     }
