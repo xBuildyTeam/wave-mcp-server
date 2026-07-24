@@ -383,10 +383,11 @@ function fetchWithTimeout(url, options = {}, timeoutMs = API_TIMEOUT_MS) {
 
 async function base44Fetch(path: string, options: any = {}) {
   const url = new URL(`${BASE44_BASE_URL}${path}`);
-  const headers = { "Content-Type": "application/json", "x-api-key": BASE44_API_KEY, ...options.headers };
+  url.searchParams.set("api_key", BASE44_API_KEY);
+  const headers = { "Content-Type": "application/json", ...options.headers };
   if (options.headers?.["Content-Type"] === undefined) delete headers["Content-Type"];
   const response = await fetchWithTimeout(url.toString(), { ...options, headers });
-  if (!response.ok) throw new Error(`Base44 API returned ${response.status}`);
+  if (!response.ok) throw new Error(`Base44 API returned ${response.status}: ${await response.text().catch(() => "unknown")}`);
   return response.json();
 }
 
