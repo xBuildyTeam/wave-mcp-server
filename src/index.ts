@@ -1,5 +1,5 @@
 /**
- * Wave OS MCP Server v1.4.0 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
+ * Wave OS MCP Server v1.5.1 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
  * 
  * Three credential modes for Theta compute:
  * 1. Wave OS Auth Token — routes through thetaProxy backend (credit-gated, no raw key needed)
@@ -57,6 +57,43 @@ const COMPUTE_ROUTING = ["hybrid", "wave_os", "direct"].includes(process.env.COM
   : "hybrid";
 
 const MCP_ENCRYPTION_KEY = process.env.MCP_ENCRYPTION_KEY || "";
+
+// Cursor activity feed — conversation ID for Wave OS chat bubbles
+const CURSOR_CONVERSATION_ID = "6a62e00ec8143266c5b313d0";
+
+// Activity messages for each tool — shown as chat bubbles in Wave OS
+const TOOL_ACTIVITY = {
+  "list_entities": "📋 Scanning Wave OS entity schemas...",
+  "read_records": "📖 Reading {{entity_name}} records...",
+  "create_records": "✏️ Writing to {{entity_name}}...",
+  "update_records": "📝 Updating {{entity_name}} records...",
+  "delete_records": "🗑️ Deleting {{entity_name}} records...",
+  "theta_list_models": "🔍 Querying Theta EdgeCloud for available models...",
+  "theta_check_gpu_status": "🖥️ Checking Theta EdgeCloud GPU availability...",
+  "theta_estimate_cost": "💰 Estimating compute cost...",
+  "theta_run_inference": "🧠 Running AI inference on Theta EdgeCloud...",
+  "wave_generate_image": "🎨 Generating AI image through Wave OS GPU layer...",
+  "wave_chat": "💬 Chatting with Wave OS Assistant...",
+  "wave_morning_briefing": "☀️ Requesting morning briefing from Chief of Staff...",
+  "wave_triage_tasks": "🔄 Triaging tasks via Chief of Staff...",
+  "wave_check_messages": "📬 Checking for messages from Wave OS...",
+  "wave_send_message": "📤 Sending message to Wave OS...",
+  "wave_recall_memory": "🧠 Recalling memories from Wave OS...",
+  "wave_save_memory": "💾 Saving memory to Wave OS...",
+};
+
+function formatActivity(toolName, args) {
+  const tpl = TOOL_ACTIVITY[toolName];
+  if (!tpl) return null;
+  if (!args) return tpl;
+  return tpl.replace(/{{(\w+)}}/g, (_, k) => args[k] || "");
+}
+
+async function logCursorActivity(message) {
+  try {
+    await entityProxy("create", "ChatMessage", { data: [{ conversation_id: CURSOR_CONVERSATION_ID, sender_id: "cursor-mcp", sender_name: "Cursor", content: message, message_type: "text", read_by: [] }] });
+  } catch (e) { /* silent — never break tool calls */ }
+}
 const ALLOWED_FILE_ROOT = process.env.MCP_FILE_ROOT || join(homedir(), "wave-mcp-uploads");
 const CREDENTIAL_STORE_PATH = join(homedir(), ".wave-mcp", "credentials.json");
 
@@ -897,10 +934,28 @@ const server = new Server({ name: "wave-os-mcp-server", version: "1.3.0" }, { ca
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: tools.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
+  
+  // Log activity start to Wave OS chat (fire-and-forget, non-blocking)
+  const activityMsg = formatActivity(name, args);
+  if (activityMsg) logCursorActivity(activityMsg);
+  
   try {
     const result = await handleToolCall(name, args);
+    
+    // Log completion for specific tools with result data
+    if (name === "wave_generate_image" && result && result.image_url) {
+      logCursorActivity("✅ Image generated! " + (result.credits_deducted || 2) + " credits deducted. Image URL ready in Cursor.");
+    } else if (name === "wave_morning_briefing" && result) {
+      logCursorActivity("✅ Morning briefing delivered to Cursor.");
+    } else if (name === "wave_send_message" && result) {
+      logCursorActivity("✅ Message delivered to Wave OS.");
+    } else if (name === "list_entities" && result && result.entities) {
+      logCursorActivity("✅ Found " + result.entities.length + " entity schemas in Wave OS.");
+    }
+    
     return { content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result, null, 2) }] };
   } catch (error) {
+    if (activityMsg) logCursorActivity("❌ " + name + " failed: " + (error.message || "unknown error").slice(0, 100));
     return { content: [{ type: "text", text: `Error: ${sanitizeError(error)}` }], isError: true };
   }
 });
@@ -914,5 +969,5 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 validateConfig();
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error("Wave OS MCP Server v1.4.0 — hybrid compute routing + credit-gated + BYOK + AES-256-GCM");
+console.error("Wave OS MCP Server v1.5.1 — hybrid compute routing + credit-gated + BYOK + AES-256-GCM");
 console.error("Architecture: Base44 (intelligence) → Theta (decentralized compute). Every Theta call flows through Base44.");
