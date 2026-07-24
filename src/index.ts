@@ -572,6 +572,8 @@ const tools = [
   // LAYER 4: WAVE OS <-> CURSOR MESSAGING
   { name: "wave_check_messages", description: "Check for unread messages from Wave OS (notifications left by the Wave Assistant or Chief of Staff for Cursor to pick up). Returns messages with type 'cursor_message' that haven't been read yet.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, mark_read: { type: "boolean", description: "If true, marks returned messages as read (default: true)" } }, required: ["workspace_id"], additionalProperties: false } },
   { name: "wave_send_message", description: "Send a message from Cursor back to Wave OS. Creates a notification that the Wave Assistant can display. Enables bidirectional Cursor <-> Wave OS communication.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, title: { type: "string" }, message: { type: "string" }, source: { type: "string", description: "Identifier for the message source, e.g. 'cursor' (default: 'cursor')" } }, required: ["workspace_id", "message"], additionalProperties: false } },
+];
+
 // ============================================================
 // TOOL HANDLERS
 // ============================================================
