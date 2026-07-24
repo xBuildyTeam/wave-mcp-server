@@ -1,5 +1,5 @@
 /**
- * Wave OS MCP Server v1.7.0 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
+ * Wave OS MCP Server v1.7.1 — Hybrid Compute Routing + Credit-Gated + BYOK + AES-256
  * 
  * Three credential modes for Theta compute:
  * 1. Wave OS Auth Token — routes through thetaProxy backend (credit-gated, no raw key needed)
@@ -821,29 +821,19 @@ async function handleToolCall(name: string, args: any) {
     }
 
     case "wave": {
-      // Simply post the message into the Wave OS Assistant chat as a user message.
-      // Wave OS reads it from the ChatMessage entity and handles everything — 
-      // notes, images, tasks — exactly as if Eddie typed it into the desktop UI.
+      // Post the message directly into the Wave OS Assistant conversation.
+      // Wave OS reads new ChatMessages and processes them — no backend routing needed.
       const msg = typeof args.message === "string" ? args.message.trim() : "";
       if (!msg) throw new Error("Message required");
 
-      // Get or create the Wave Assistant conversation
-      const convResult = await base44Fetch("/functions/conversationManager", {
-        method: "POST",
-        body: JSON.stringify({ action: "getOrCreate", workspace_id: EDDIE_WORKSPACE_ID })
-      });
-      const convData = typeof convResult === "string" ? JSON.parse(convResult) : convResult;
-      const conversationId = convData?.conversation_id || convData?.data?.conversation_id || convData?.id;
+      // Hardcoded Wave Assistant conversation ID (Eddie's active conversation)
+      const WAVE_CONVERSATION_ID = "6a6300481036df6155d4010d";
 
-      if (!conversationId) {
-        throw new Error("Could not get Wave Assistant conversation ID");
-      }
-
-      // Post the message as a user message — Wave OS will see it and respond
+      // Create the ChatMessage — Wave OS UI polls for new messages and processes them
       validateEntityName("ChatMessage");
       await entityProxy("create", "ChatMessage", {
         data: {
-          conversation_id: conversationId,
+          conversation_id: WAVE_CONVERSATION_ID,
           sender_id: EDDIE_WORKSPACE_ID,
           sender_name: "Cursor",
           content: msg,
@@ -852,21 +842,23 @@ async function handleToolCall(name: string, args: any) {
         }
       });
 
-      // Update the conversation's last message preview so the UI refreshes
+      // Update conversation preview so Wave OS UI refreshes immediately
       validateEntityName("Conversation");
-      await entityProxy("update", "Conversation", {
-        query: { id: conversationId },
-        data: {
-          last_message_preview: msg.substring(0, 100),
-          last_message_at: new Date().toISOString(),
-          last_sender_name: "Cursor"
-        }
-      });
+      try {
+        await entityProxy("update", "Conversation", {
+          query: { id: WAVE_CONVERSATION_ID },
+          data: {
+            last_message_preview: msg.substring(0, 100),
+            last_message_at: new Date().toISOString(),
+            last_sender_name: "Cursor"
+          }
+        });
+      } catch(_) {}
 
       return {
         content: [{
           type: "text",
-          text: "✅ Message sent to Wave OS Assistant: \"" + msg + "\"\n\nWave OS will process your request and you\'ll see the result in the Wave Assistant chat on the desktop."
+          text: "✅ Sent to Wave OS: \"" + msg + "\"\n\nYour message is now in the Wave Assistant chat. Wave OS will process it and you\'ll see the result on the desktop."
         }]
       };
     }
