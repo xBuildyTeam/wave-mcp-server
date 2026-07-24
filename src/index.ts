@@ -567,13 +567,13 @@ const tools = [
   { name: "wave_save_memory", description: "Save a memory to Wave OS. Auto-categorizes by content type.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, content: { type: "string" }, category: { type: "string", enum: ["contact", "preference", "task", "note", "project", "code", "general"] }, tags: { type: "array", items: { type: "string" } } }, required: ["workspace_id", "content"], additionalProperties: false } },
   { name: "wave_recall_memory", description: "Search Wave OS memories by keyword or category.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, query: { type: "string" }, category: { type: "string", enum: ["contact", "preference", "task", "note", "project", "code", "general"] } }, required: ["workspace_id"], additionalProperties: false } },
   { name: "wave_delegate_subagent", description: "Delegate a task to a Wave OS sub-agent for background execution.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, task: { type: "string" }, context: { type: "string" } }, required: ["workspace_id", "task"], additionalProperties: false } },
-  { name: "wave_create_note", description: "Create a note in Wave OS Notes app. Handles the block format automatically — just pass title and content as plain text.", inputSchema: { type: "object", properties: { title: { type: "string", description: "Note title" }, content: { type: "string", description: "Note body text (plain text, automatically formatted into Wave OS block format)" }, emoji: { type: "string", description: "Note emoji icon (default: 📝)" }, workspace_id: { type: "string", description: "Wave OS workspace ID (defaults to Eddie's workspace)" } }, required: ["title", "content"], additionalProperties: false } },
-  { name: "wave_chat", description: "Send a message to the Wave OS AI Assistant. Costs 1 credit per interaction.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, message: { type: "string" }, context: { type: "string" } }, required: ["workspace_id", "message"], additionalProperties: false } },
+  { name: "wavenotes", description: "📱 @wavenotes — Create a note in Wave OS Notes app. Triggered when user types @wavenotes. Handles block format automatically. Usage: @wavenotes titled [title]. [content]. Returns the created note with ID and timestamp.", inputSchema: { type: "object", properties: { title: { type: "string", description: "Note title" }, content: { type: "string", description: "Note body text (plain text)" }, emoji: { type: "string", description: "Note emoji icon (default: 📝)" } }, required: ["title", "content"], additionalProperties: false } },
+  { name: "wavechat", description: "💬 @wavechat — Send a message to the Wave OS AI Assistant. Triggered when user types @wavechat. Costs 1 credit per interaction. Costs 1 credit per interaction.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, message: { type: "string" }, context: { type: "string" } }, required: ["workspace_id", "message"], additionalProperties: false } },
 
   // LAYER 4: WAVE OS <-> CURSOR MESSAGING
   { name: "wave_check_messages", description: "Check for unread messages from Wave OS (notifications left by the Wave Assistant or Chief of Staff for Cursor to pick up). Returns messages with type 'cursor_message' that haven't been read yet.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, mark_read: { type: "boolean", description: "If true, marks returned messages as read (default: true)" } }, required: ["workspace_id"], additionalProperties: false } },
   { name: "wave_send_message", description: "Send a message from Cursor back to Wave OS. Creates a notification that the Wave Assistant can display. Enables bidirectional Cursor <-> Wave OS communication.", inputSchema: { type: "object", properties: { workspace_id: { type: "string" }, title: { type: "string" }, message: { type: "string" }, source: { type: "string", description: "Identifier for the message source, e.g. 'cursor' (default: 'cursor')" } }, required: ["workspace_id", "message"], additionalProperties: false } },
-  { name: "wave_generate_image", description: "Generate an AI image through Wave OS GPU compute layer. Returns image URL directly. 2 credits per image. Styles: photorealistic, digital-art, anime, 3d-render, cyberpunk, minimalist.", inputSchema: { type: "object", properties: { prompt: { type: "string", description: "Image generation prompt (max 2000 chars)" }, style: { type: "string", enum: ["photorealistic", "digital-art", "anime", "3d-render", "cyberpunk", "minimalist"], default: "photorealistic" }, width: { type: "number", default: 1024 }, height: { type: "number", default: 1024 }, seed: { type: "number" } }, required: ["prompt"], additionalProperties: false } },
+  { name: "waveimage", description: "🎨 @waveimage — Generate an AI image through Wave OS GPU compute layer. Triggered when user types @waveimage. Returns image URL directly. 2 credits per image. Styles: photorealistic, digital-art, anime, 3d-render, cyberpunk, minimalist.", inputSchema: { type: "object", properties: { prompt: { type: "string", description: "Image generation prompt (max 2000 chars)" }, style: { type: "string", enum: ["photorealistic", "digital-art", "anime", "3d-render", "cyberpunk", "minimalist"], default: "photorealistic" }, width: { type: "number", default: 1024 }, height: { type: "number", default: 1024 }, seed: { type: "number" } }, required: ["prompt"], additionalProperties: false } },
 ];
 
 // ============================================================
@@ -814,7 +814,7 @@ async function handleToolCall(name: string, args: any) {
       if (!task) throw new Error("Task required");
       return await base44Fetch(`/functions/waveChat`, { method: "POST", body: JSON.stringify({ action: "delegateSubAgent", workspace_id: wsId, task, context: typeof args.context === "string" ? args.context.substring(0, 5000) : undefined }) });
     }
-    case "wave_create_note": {
+    case "wavenotes": {
       const wsId = args.workspace_id || EDDIE_WORKSPACE_ID;
       return await base44Fetch("/functions/createNote", {
         method: "POST",
@@ -822,7 +822,7 @@ async function handleToolCall(name: string, args: any) {
       });
     }
 
-    case "wave_chat": {
+    case "wavechat": {
       const wsId = validateFunctionName(args.workspace_id);
       const msg = typeof args.message === "string" ? args.message.substring(0, 10000) : "";
       if (!msg) throw new Error("Message required");
@@ -875,7 +875,7 @@ async function handleToolCall(name: string, args: any) {
     }
 
 
-    case "wave_generate_image": {
+    case "waveimage": {
       if (typeof args.prompt !== "string" || args.prompt.length > 2000) throw new Error("Invalid prompt");
       const validStyles = ["photorealistic", "digital-art", "anime", "3d-render", "cyberpunk", "minimalist"];
       const style = validStyles.includes(args.style) ? args.style : "photorealistic";
@@ -955,7 +955,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const result = await handleToolCall(name, args);
     
     // Log completion for specific tools with result data
-    if (name === "wave_generate_image" && result && result.image_url) {
+    if (name === "waveimage" && result && result.image_url) {
       logCursorActivity("✅ Image generated! " + (result.credits_deducted || 2) + " credits deducted. Image URL ready in Cursor.");
     } else if (name === "wave_morning_briefing" && result) {
       logCursorActivity("✅ Morning briefing delivered to Cursor.");
@@ -981,5 +981,5 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 validateConfig();
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error("Wave OS MCP Server v1.5.5 — hybrid compute routing + credit-gated + BYOK + AES-256-GCM");
+console.error("Wave OS MCP Server v1.5.6 — hybrid compute routing + credit-gated + BYOK + AES-256-GCM");
 console.error("Architecture: Base44 (intelligence) → Theta (decentralized compute). Every Theta call flows through Base44.");
